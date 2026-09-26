@@ -1,5 +1,5 @@
 import { NextResponse } from"next/server";
-import connectDB from"@/lib/db";
+import connectDB from"@/lib/mongodb";
 import Patient from"@/models/Patient";
 
 // GET — Fetch patient profile

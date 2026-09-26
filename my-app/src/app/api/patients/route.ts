@@ -10,13 +10,15 @@ export async function GET(request: NextRequest) {
  const status = searchParams.get("status");
  const department = searchParams.get("department");
 
- const filter: any = {};
- if (search) {
- filter.$or = [
- { name: { $regex: search, $options:"i" } },
- { department: { $regex: search, $options:"i" } }
- ];
- }
+  const filter: any = {};
+  if (search) {
+    filter.$or = [
+      { firstName: { $regex: search, $options: "i" } },
+      { lastName: { $regex: search, $options: "i" } },
+      { email: { $regex: search, $options: "i" } },
+      { username: { $regex: search, $options: "i" } },
+    ];
+  }
  if (status) filter.status = status;
  if (department) filter.department = department;
 

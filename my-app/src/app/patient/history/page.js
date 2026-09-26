@@ -1,537 +1,484 @@
 "use client";
 
-import Link from"next/link";
-import { useState, useEffect } from"react";
-
-/* ────────────────────────────────────────────────────────────
- Helper components
- ──────────────────────────────────────────────────────────── */
-const SEVERITY_CONFIG = {
- critical: { label:"Critical", color:"text-red-400", bg:"bg-red-500/12", dot:"bg-red-400", border:"border-red-500/20" },
- high: { label:"High", color:"text-orange-400", bg:"bg-orange-500/12", dot:"bg-orange-400", border:"border-orange-500/20" },
- moderate: { label:"Moderate", color:"text-yellow-400", bg:"bg-yellow-500/12", dot:"bg-yellow-400", border:"border-yellow-500/20" },
- low: { label:"Low", color:"text-green-400", bg:"bg-green-500/12", dot:"bg-green-400", border:"border-green-500/20" },
- info: { label:"Info", color:"text-emerald-400", bg:"bg-emerald-500/12", dot:"bg-emerald-400", border:"border-emerald-500/20" },
-};
-
-const STATUS_CONFIG = {
- completed: { label:"Completed", color:"text-green-400", bg:"bg-green-500/12" },
- cancelled: { label:"Cancelled", color:"text-red-400", bg:"bg-red-500/12" },
- upcoming: { label:"Upcoming", color:"text-emerald-400", bg:"bg-emerald-500/12" },
-};
-
-const CALL_STATUS_CONFIG = {
- scheduled: { label:"Scheduled", color:"text-emerald-400", bg:"bg-emerald-500/12", dot:"bg-emerald-400" },"in-progress": { label:"In Progress", color:"text-emerald-400", bg:"bg-emerald-500/12", dot:"bg-emerald-400 animate-pulse" },
- completed: { label:"Completed", color:"text-green-400", bg:"bg-green-500/12", dot:"bg-green-400" },
- failed: { label:"Failed", color:"text-red-400", bg:"bg-red-500/12", dot:"bg-red-400" },
- cancelled: { label:"Cancelled", color:"text-gray-400", bg:"bg-gray-500/12", dot:"bg-gray-400" },
-};
+import Link from "next/link";
+import { useState, useEffect } from "react";
+import Navbar from "@/components/shared/Navbar";
+import SeverityBadge from "@/components/shared/SeverityBadge";
+import EmptyState from "@/components/shared/EmptyState";
+import {
+  Calendar,
+  Clock,
+  Building2,
+  Bot,
+  Phone,
+  User,
+  ChevronDown,
+  ChevronUp,
+  FileText,
+  Activity,
+  CheckCircle2,
+  AlertCircle,
+  Sparkles,
+} from "lucide-react";
 
 function formatDate(iso) {
- const d = new Date(iso);
- return d.toLocaleDateString("en-IN", { day:"numeric", month:"short", year:"numeric" });
+  const d = new Date(iso);
+  return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 }
 
 function formatTime(iso) {
- const d = new Date(iso);
- return d.toLocaleTimeString("en-IN", { hour:"2-digit", minute:"2-digit", hour12: true });
+  const d = new Date(iso);
+  return d.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: true });
 }
 
 function groupByMonth(items) {
- const groups = {};
- for (const item of items) {
- const key = new Date(item.date).toLocaleDateString("en-IN", { month:"long", year:"numeric" });
- if (!groups[key]) groups[key] = [];
- groups[key].push(item);
- }
- return Object.entries(groups);
+  const groups = {};
+  for (const item of items) {
+    const key = new Date(item.date).toLocaleDateString("en-IN", { month: "long", year: "numeric" });
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(item);
+  }
+  return Object.entries(groups);
 }
 
-/* ────────────────────────────────────────────────────────────
- Page component
- ──────────────────────────────────────────────────────────── */
 export default function PatientHistoryPage() {
- const [expandedId, setExpandedId] = useState(null);
- const [filterType, setFilterType] = useState("all");
- const [patient, setPatient] = useState(null);
- const [timeline, setTimeline] = useState([]);
- const [loading, setLoading] = useState(true);
- const [totalCalls, setTotalCalls] = useState(0);
- const [refillCount, setRefillCount] = useState(0);
+  const [expandedId, setExpandedId] = useState(null);
+  const [filterType, setFilterType] = useState("all");
+  const [patient, setPatient] = useState(null);
+  const [timeline, setTimeline] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [totalCalls, setTotalCalls] = useState(0);
+  const [refillCount, setRefillCount] = useState(0);
 
- // Fetch data from MongoDB on mount
- useEffect(() => {
- async function loadData() {
- try {
- const stored = JSON.parse(sessionStorage.getItem("medconnect_patient") ||"null");
- if (!stored?.id) {
- setLoading(false);
- return;
- }
+  useEffect(() => {
+    async function loadData() {
+      try {
+        const stored = JSON.parse(sessionStorage.getItem("medconnect_patient") || "null");
+        if (!stored?.id) {
+          setLoading(false);
+          return;
+        }
 
- // Fetch profile, triages, bookings, and calls in parallel
- const [profileRes, triageRes, bookingRes, callRes] = await Promise.all([
- fetch(`/api/patient/profile?patientId=${stored.id}`),
- fetch(`/api/triage?patientId=${stored.id}`),
- fetch(`/api/bookings?patientId=${stored.id}`),
- fetch(`/api/calls?patientId=${stored.id}`),
- ]);
+        const [profileRes, triageRes, bookingRes, callRes] = await Promise.all([
+          fetch(`/api/patient/profile?patientId=${stored.id}`),
+          fetch(`/api/triage?patientId=${stored.id}`),
+          fetch(`/api/bookings?patientId=${stored.id}`),
+          fetch(`/api/calls?patientId=${stored.id}`),
+        ]);
 
- const profileData = await profileRes.json();
- const triageData = await triageRes.json();
- const bookingData = await bookingRes.json();
- const callData = await callRes.json();
+        const profileData = await profileRes.json();
+        const triageData = await triageRes.json();
+        const bookingData = await bookingRes.json();
+        const callData = await callRes.json();
 
- // Fetch reminders separately so it doesn't block main data loading
- fetch(`/api/reminders?patientId=${stored.id}`)
- .then(res => res.json())
- .then(data => {
- const meds = data.reminders || [];
- const count = meds.filter(m => m.remainingQuantity <= (m.tabletsPerDose * m.refillAlertDays * m.dailyDoses)).length;
- setRefillCount(count);
- })
- .catch(err => console.error(err));
+        fetch(`/api/reminders?patientId=${stored.id}`)
+          .then((res) => res.json())
+          .then((data) => {
+            const meds = data.reminders || [];
+            const count = meds.filter(
+              (m) =>
+                m.remainingQuantity <=
+                m.tabletsPerDose * m.refillAlertDays * (m.times?.length || m.dailyDoses || 1)
+            ).length;
+            setRefillCount(count);
+          })
+          .catch((err) => console.error(err));
 
- // Set patient info
- if (profileData.patient) {
- setPatient(profileData.patient);
- }
+        if (profileData.patient) {
+          setPatient(profileData.patient);
+        }
 
- // Build unified timeline
- const entries = [];
+        const entries = [];
 
- // Add triage entries
- for (const t of triageData.triages || []) {
- entries.push({
- id: t._id,
- type:"triage",
- date: t.createdAt,
- title: t.title,
- severity: t.severity,
- symptoms: t.symptoms || [],
- transcript: t.transcript || [],
- recommendation: t.recommendation ||"",
- lang: t.lang ||"en",
- });
- }
+        for (const t of triageData.triages || []) {
+          entries.push({
+            id: t._id,
+            type: "triage",
+            date: t.createdAt,
+            title: t.title || "AI Clinical Assessment",
+            severity: t.severity || "info",
+            symptoms: t.symptoms || [],
+            transcript: t.transcript || [],
+            recommendation: t.recommendation || "",
+            lang: t.lang || "en",
+          });
+        }
 
- // Add booking entries
- for (const b of bookingData.bookings || []) {
- entries.push({
- id: b._id,
- type:"booking",
- date: b.createdAt,
- title: `Booked — ${b.facilityName}`,
- facility: b.facilityName,
- address: b.address ||"",
- department: b.department ||"General",
- status: b.status ||"upcoming",
- rating: b.rating,
- notes: b.notes ||"",
- });
- }
+        for (const b of bookingData.bookings || []) {
+          entries.push({
+            id: b._id,
+            type: "booking",
+            date: b.createdAt,
+            title: `Appointment — ${b.facilityName}`,
+            facility: b.facilityName,
+            address: b.address || "",
+            department: b.department || "General",
+            status: b.status || "upcoming",
+            rating: b.rating,
+            notes: b.notes || "",
+          });
+        }
 
- // Add call entries
- for (const c of callData.calls || []) {
- entries.push({
- id: c._id,
- type:"call",
- date: c.scheduledAt,
- title: `AI Health Call`,
- callStatus: c.status,
- severity: c.severity,
- summary: c.summary ||"",
- notes: c.notes ||"",
- });
- }
- setTotalCalls((callData.calls || []).length);
+        for (const c of callData.calls || []) {
+          entries.push({
+            id: c._id,
+            type: "call",
+            date: c.scheduledAt,
+            title: "AI Health Checkup Call",
+            callStatus: c.status,
+            severity: c.severity,
+            summary: c.summary || "",
+            notes: c.notes || "",
+          });
+        }
+        setTotalCalls((callData.calls || []).length);
 
- // Sort by date descending
- entries.sort((a, b) => new Date(b.date) - new Date(a.date));
- setTimeline(entries);
- } catch (err) {
- console.error("Failed to load history:", err);
- } finally {
- setLoading(false);
- }
- }
+        entries.sort((a, b) => new Date(b.date) - new Date(a.date));
+        setTimeline(entries);
+      } catch (err) {
+        console.error("Failed to load history:", err);
+      } finally {
+        setLoading(false);
+      }
+    }
 
- loadData();
- }, []);
+    loadData();
+  }, []);
 
- const filtered = timeline.filter(
- (e) => filterType ==="all" || e.type === filterType
- );
- const grouped = groupByMonth(filtered);
+  const filtered = timeline.filter(
+    (e) => filterType === "all" || e.type === filterType
+  );
+  const grouped = groupByMonth(filtered);
 
- const totalTriages = timeline.filter((e) => e.type ==="triage").length;
- const totalBookings = timeline.filter((e) => e.type ==="booking").length;
- const completedVisits = timeline.filter((e) => e.type ==="booking" && e.status ==="completed").length;
+  const totalTriages = timeline.filter((e) => e.type === "triage").length;
+  const totalBookings = timeline.filter((e) => e.type === "booking").length;
+  const completedVisits = timeline.filter((e) => e.type === "booking" && e.status === "completed").length;
 
- const patientName = patient ? `${patient.firstName} ${patient.lastName}` :"Patient";
- const patientAvatar = patient ? `${patient.firstName?.[0] ||""}${patient.lastName?.[0] ||""}` :"?";
+  const patientName = patient ? `${patient.firstName} ${patient.lastName}` : "Patient";
+  const patientAvatar = patient ? `${patient.firstName?.[0] || ""}${patient.lastName?.[0] || ""}` : "PT";
 
- return (
- <div className="flex flex-col min-h-screen">
- {/* ── Header ── */}
- <header className="px-6 py-4 flex items-center justify-between border-b border-border">
- <Link href="/" className="flex items-center gap-2 no-underline">
- <div className="w-8 h-8 rounded-lg from-primary to-accent flex items-center justify-center shadow">
- <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
- </div>
- <span className="text-lg font-bold tracking-tight">
- Amrit<span className="text-[#10B981]">Care</span> <span className="text-xs font-medium text-[#059669] bg-[#D1FAE5] px-1.5 py-0.5 rounded-md ml-0.5">AI</span>
- </span>
- </Link>
- <div className="flex items-center gap-4">
- <Link href="/patient/triage" className="text-sm text-text-muted hover:text-foreground transition-colors no-underline">AI Triage</Link>
- <Link href="/patient/locate" className="text-sm text-text-muted hover:text-foreground transition-colors no-underline">Find Hospital</Link>
- <Link href="/reminders" className="relative text-sm text-text-muted hover:text-foreground transition-colors no-underline flex items-center">
- 💊 Reminders
- {refillCount > 0 && (
- <span className="absolute -top-2 -right-3 bg-red-500 text-white text-[10px] font-bold w-4 h-4 flex items-center justify-center rounded-full">
- {refillCount}
- </span>
- )}
- </Link>
- <Link href="/patient/login" className="text-sm text-text-muted hover:text-foreground transition-colors no-underline">Sign Out</Link>
- </div>
- </header>
+  return (
+    <div className="flex flex-col min-h-screen bg-gray-50 has-bottom-nav">
+      <Navbar refillCount={refillCount} />
 
- <main className="flex-1 flex flex-col lg:flex-row">
- {/* ── LEFT SIDEBAR — Patient Profile ── */}
- <aside className="lg:w-[300px] xl:w-[320px] p-6 border-b lg:border-b-0 lg:border-r border-border shrink-0">
- {loading ? (
- <div className="space-y-4 animate-pulse">
- <div className="w-20 h-20 rounded-2xl bg-surface mx-auto" />
- <div className="h-5 bg-surface rounded w-3/4 mx-auto" />
- <div className="h-3 bg-surface rounded w-1/2 mx-auto" />
- <div className="grid grid-cols-3 gap-2">
- {[1, 2, 3].map((i) => <div key={i} className="h-16 bg-surface rounded-xl" />)}
- </div>
- </div>
- ) : !patient ? (
- <div className="text-center py-8">
- <p className="text-text-muted text-sm mb-4">Please log in to view your profile.</p>
- <Link href="/patient/login" className="btn-primary text-sm px-6 py-2.5 no-underline">Sign In</Link>
- </div>
- ) : (
- <>
- <div className="flex flex-col items-center text-center mb-6">
- <div className="w-20 h-20 rounded-2xl from-primary/20 to-accent/20 border border-primary/20 flex items-center justify-center mb-4">
- <span className="text-2xl font-bold text-primary">{patientAvatar}</span>
- </div>
- <h1 className="text-lg font-bold">{patientName}</h1>
- <p className="text-xs text-text-muted font-mono mt-1">{patient.email}</p>
- </div>
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 py-8 flex flex-col lg:flex-row gap-8">
+        {/* ── LEFT SIDEBAR — Patient Profile ── */}
+        <aside className="lg:w-80 shrink-0 space-y-6">
+          <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-sm">
+            {loading ? (
+              <div className="space-y-4 animate-pulse">
+                <div className="w-16 h-16 rounded-2xl skeleton mx-auto" />
+                <div className="h-5 skeleton rounded w-3/4 mx-auto" />
+                <div className="h-3 skeleton rounded w-1/2 mx-auto" />
+                <div className="grid grid-cols-3 gap-2 pt-2">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="h-14 skeleton rounded-xl" />
+                  ))}
+                </div>
+              </div>
+            ) : !patient ? (
+              <div className="text-center py-6">
+                <p className="text-gray-500 text-sm mb-4">Please log in to view clinical history.</p>
+                <Link href="/patient/login" className="btn-primary text-sm px-5 py-2">
+                  Sign In
+                </Link>
+              </div>
+            ) : (
+              <>
+                <div className="flex flex-col items-center text-center mb-6">
+                  <div className="w-16 h-16 rounded-2xl bg-teal-50 border border-teal-200 flex items-center justify-center mb-3">
+                    <span className="text-xl font-bold text-teal-700">{patientAvatar}</span>
+                  </div>
+                  <h1 className="text-lg font-bold text-gray-900">{patientName}</h1>
+                  <p className="text-xs text-gray-500 mt-0.5">{patient.email}</p>
+                </div>
 
- <div className="grid grid-cols-3 gap-2 mb-6">
- <div className="glass rounded-xl p-3 text-center">
- <p className="text-xs text-text-muted mb-0.5">Age</p>
- <p className="text-sm font-semibold">{patient.age ||"—"}</p>
- </div>
- <div className="glass rounded-xl p-3 text-center">
- <p className="text-xs text-text-muted mb-0.5">Blood</p>
- <p className="text-sm font-semibold text-red-400">{patient.blood ||"—"}</p>
- </div>
- <div className="glass rounded-xl p-3 text-center">
- <p className="text-xs text-text-muted mb-0.5">Since</p>
- <p className="text-sm font-semibold">
- {new Date(patient.createdAt).toLocaleDateString("en-IN", { month:"short", year:"numeric" })}
- </p>
- </div>
- </div>
+                <div className="grid grid-cols-3 gap-2 mb-6">
+                  <div className="bg-gray-50 border border-gray-100 rounded-xl p-2.5 text-center">
+                    <span className="text-[11px] text-gray-400 font-semibold block">Age</span>
+                    <span className="text-sm font-bold text-gray-800">{patient.age || "—"}</span>
+                  </div>
+                  <div className="bg-gray-50 border border-gray-100 rounded-xl p-2.5 text-center">
+                    <span className="text-[11px] text-gray-400 font-semibold block">Blood</span>
+                    <span className="text-sm font-bold text-rose-600">{patient.blood || "—"}</span>
+                  </div>
+                  <div className="bg-gray-50 border border-gray-100 rounded-xl p-2.5 text-center">
+                    <span className="text-[11px] text-gray-400 font-semibold block">Member</span>
+                    <span className="text-xs font-bold text-gray-700">
+                      {new Date(patient.createdAt).toLocaleDateString("en-IN", { month: "short", year: "2-digit" })}
+                    </span>
+                  </div>
+                </div>
 
- <div className="space-y-2 mb-6">
- <div className="flex items-center justify-between glass rounded-xl px-4 py-3">
- <div className="flex items-center gap-2.5">
- <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center"><span className="text-sm">🤖</span></div>
- <span className="text-sm text-text-secondary">AI Triages</span>
- </div>
- <span className="text-sm font-bold text-primary">{totalTriages}</span>
- </div>
- <div className="flex items-center justify-between glass rounded-xl px-4 py-3">
- <div className="flex items-center gap-2.5">
- <div className="w-8 h-8 rounded-lg bg-secondary/10 flex items-center justify-center"><span className="text-sm">🏥</span></div>
- <span className="text-sm text-text-secondary">Bookings</span>
- </div>
- <span className="text-sm font-bold text-secondary">{totalBookings}</span>
- </div>
- <div className="flex items-center justify-between glass rounded-xl px-4 py-3">
- <div className="flex items-center gap-2.5">
- <div className="w-8 h-8 rounded-lg bg-green-500/10 flex items-center justify-center"><span className="text-sm">✅</span></div>
- <span className="text-sm text-text-secondary">Visits Done</span>
- </div>
- <span className="text-sm font-bold text-green-400">{completedVisits}</span>
- </div>
- <div className="flex items-center justify-between glass rounded-xl px-4 py-3">
- <div className="flex items-center gap-2.5">
- <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center"><span className="text-sm"></span></div>
- <span className="text-sm text-text-secondary">AI Calls</span>
- </div>
- <span className="text-sm font-bold text-emerald-400">{totalCalls}</span>
- </div>
- </div>
+                <div className="space-y-2 mb-6 text-sm">
+                  <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-100">
+                    <div className="flex items-center gap-2 text-gray-600">
+                      <Bot className="w-4 h-4 text-teal-600" />
+                      <span>AI Triages</span>
+                    </div>
+                    <span className="font-bold text-gray-900">{totalTriages}</span>
+                  </div>
+                  <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-100">
+                    <div className="flex items-center gap-2 text-gray-600">
+                      <Building2 className="w-4 h-4 text-teal-600" />
+                      <span>Bookings</span>
+                    </div>
+                    <span className="font-bold text-gray-900">{totalBookings}</span>
+                  </div>
+                  <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-100">
+                    <div className="flex items-center gap-2 text-gray-600">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      <span>Visits Completed</span>
+                    </div>
+                    <span className="font-bold text-emerald-700">{completedVisits}</span>
+                  </div>
+                  <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-100">
+                    <div className="flex items-center gap-2 text-gray-600">
+                      <Phone className="w-4 h-4 text-teal-600" />
+                      <span>AI Checkup Calls</span>
+                    </div>
+                    <span className="font-bold text-gray-900">{totalCalls}</span>
+                  </div>
+                </div>
 
- <div className="space-y-2">
- <Link href="/patient/triage" className="btn-primary w-full text-sm py-2.5 no-underline">New AI Triage</Link>
- <Link href="/patient/locate" className="btn-secondary w-full text-sm py-2.5 no-underline">Find Hospital</Link>
- </div>
- </>
- )}
- </aside>
+                <div className="space-y-2">
+                  <Link href="/patient/triage" className="btn-primary w-full text-sm py-2.5 shadow-sm text-center">
+                    New AI Triage Session
+                  </Link>
+                  <Link href="/patient/locate" className="btn-secondary w-full text-sm py-2.5 text-center">
+                    Find Nearby Hospital
+                  </Link>
+                </div>
+              </>
+            )}
+          </div>
+        </aside>
 
- {/* ── MAIN — Timeline ── */}
- <section className="flex-1 flex flex-col min-w-0">
- <div className="px-6 py-4 border-b border-border flex items-center justify-between">
- <h2 className="text-lg font-bold">Health Timeline</h2>
- <div className="flex gap-1.5">
- {[
- { value:"all", label:"All" },
- { value:"triage", label:"Triages" },
- { value:"booking", label:"Bookings" },
- { value:"call", label:"Calls" },
- ].map((opt) => (
- <button key={opt.value} id={`filter-${opt.value}`} onClick={() => setFilterType(opt.value)}
- className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
- filterType === opt.value
- ?"bg-primary/15 text-primary border border-primary/30"
- :"bg-surface text-text-muted border border-border hover:border-border-hover"
- }`}>{opt.label}</button>
- ))}
- </div>
- </div>
+        {/* ── MAIN — Timeline ── */}
+        <section className="flex-1 min-w-0 bg-white rounded-2xl p-6 sm:p-8 border border-gray-200 shadow-sm flex flex-col">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-gray-100">
+            <div>
+              <h2 className="text-xl font-bold text-gray-900">Clinical Timeline</h2>
+              <p className="text-xs text-gray-500 mt-0.5">Chronological record of triages, bookings, and calls</p>
+            </div>
 
- <div className="flex-1 overflow-y-auto px-6 py-6">
- {/* Loading skeleton */}
- {loading && (
- <div className="space-y-4 animate-pulse">
- {[1, 2, 3].map((i) => (
- <div key={i} className="glass rounded-xl p-4">
- <div className="h-4 bg-surface rounded w-2/3 mb-2" />
- <div className="h-3 bg-surface rounded w-1/3 mb-3" />
- <div className="flex gap-2">
- <div className="h-5 bg-surface rounded-full w-20" />
- <div className="h-5 bg-surface rounded-full w-16" />
- </div>
- </div>
- ))}
- </div>
- )}
+            <div className="flex gap-1.5 flex-wrap">
+              {[
+                { value: "all", label: "All Records" },
+                { value: "triage", label: "Triages" },
+                { value: "booking", label: "Bookings" },
+                { value: "call", label: "Calls" },
+              ].map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => setFilterType(opt.value)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border ${
+                    filterType === opt.value
+                      ? "bg-teal-600 text-white border-teal-600 shadow-sm"
+                      : "bg-white text-gray-600 border-gray-200 hover:border-teal-300 hover:text-teal-600"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
 
- {/* Empty state */}
- {!loading && timeline.length === 0 && (
- <div className="text-center py-16">
- <div className="w-20 h-20 mx-auto rounded-2xl bg-primary/10 flex items-center justify-center mb-4">
- <span className="text-3xl">📋</span>
- </div>
- <h3 className="text-lg font-semibold mb-2">No history yet</h3>
- <p className="text-sm text-text-muted mb-6 max-w-xs mx-auto">
- Start your first AI triage conversation or find a hospital nearby to begin building your health timeline.
- </p>
- <div className="flex items-center justify-center gap-3">
- <Link href="/patient/triage" className="btn-primary text-sm px-6 py-2.5 no-underline">Start AI Triage</Link>
- <Link href="/patient/locate" className="btn-secondary text-sm px-6 py-2.5 no-underline">Find Hospital</Link>
- </div>
- </div>
- )}
+          <div className="flex-1 pt-6">
+            {loading && (
+              <div className="space-y-4">
+                {[1, 2, 3].map((i) => (
+                  <div key={i} className="p-5 rounded-xl border border-gray-100 bg-gray-50/50 space-y-2">
+                    <div className="h-4 skeleton w-1/3" />
+                    <div className="h-3 skeleton w-1/4" />
+                    <div className="h-10 skeleton w-full rounded-lg" />
+                  </div>
+                ))}
+              </div>
+            )}
 
- {/* Timeline */}
- {!loading && grouped.map(([monthLabel, items]) => (
- <div key={monthLabel} className="mb-8">
- <div className="flex items-center gap-3 mb-4">
- <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">{monthLabel}</span>
- <div className="flex-1 h-px bg-border" />
- </div>
+            {!loading && timeline.length === 0 && (
+              <EmptyState
+                icon="calendar"
+                title="No Clinical History Yet"
+                description="Your medical consultations, triage assessments, and facility bookings will appear on this interactive timeline."
+                action={
+                  <Link href="/patient/triage" className="btn-primary text-sm px-5 py-2.5">
+                    Start Your First AI Triage
+                  </Link>
+                }
+              />
+            )}
 
- <div className="relative">
- <div className="absolute left-[15px] top-2 bottom-2 w-px bg-border" />
+            {!loading &&
+              grouped.map(([monthLabel, items]) => (
+                <div key={monthLabel} className="mb-8 last:mb-0">
+                  <div className="flex items-center gap-3 mb-5">
+                    <span className="text-xs font-bold uppercase tracking-wider text-teal-800 bg-teal-50 px-2.5 py-1 rounded-md border border-teal-100">
+                      {monthLabel}
+                    </span>
+                    <div className="flex-1 h-px bg-gray-100" />
+                  </div>
 
- <div className="space-y-4">
- {items.map((entry) => {
- const isExpanded = expandedId === entry.id;
- const isTriage = entry.type ==="triage";
- const isCall = entry.type ==="call";
- const sev = (isTriage || isCall) ? SEVERITY_CONFIG[entry.severity] : null;
- const stat = !isTriage && !isCall ? STATUS_CONFIG[entry.status] : null;
- const callSt = isCall ? CALL_STATUS_CONFIG[entry.callStatus] : null;
- const isAlertCall = isCall && ["critical","high"].includes(entry.severity) && entry.callStatus ==="completed";
+                  <div className="relative pl-6 space-y-5 before:absolute before:left-2 before:top-3 before:bottom-3 before:w-0.5 before:bg-gray-200">
+                    {items.map((entry) => {
+                      const isExpanded = expandedId === entry.id;
+                      const isTriage = entry.type === "triage";
+                      const isCall = entry.type === "call";
 
- return (
- <div key={entry.id} className="relative pl-10">
- <div className={`absolute left-[10px] top-5 w-3 h-3 rounded-full border-2 border-background z-10 ${
- isCall
- ? (callSt?.dot ||"bg-emerald-400")
- : isTriage
- ? (sev?.dot ||"bg-primary")
- : stat?.color ==="text-green-400" ?"bg-green-400" : stat?.color ==="text-red-400" ?"bg-red-400" :"bg-emerald-400"
- }`} />
+                      return (
+                        <div key={entry.id} className="relative">
+                          {/* Dot on vertical line */}
+                          <div className="absolute -left-[27px] top-4 w-3.5 h-3.5 rounded-full border-2 border-white bg-teal-600 shadow-sm z-10" />
 
- <div id={`timeline-${entry.id}`}
- onClick={() => setExpandedId(isExpanded ? null : entry.id)}
- className={`glass rounded-xl p-4 cursor-pointer transition-all hover:bg-surface-hover ${
- isExpanded ?"ring-1 ring-primary/20" :""
- } ${isAlertCall ?"ring-1 ring-red-500/30" :""}`}>
- <div className="flex items-start justify-between gap-3 mb-2">
- <div className="flex-1 min-w-0">
- <div className="flex items-center gap-2 flex-wrap mb-1">
- <span className="text-sm">{isCall ?"" : isTriage ?"🤖" :"🏥"}</span>
- <h3 className="text-sm font-semibold truncate">{entry.title}</h3>
- </div>
- <p className="text-xs text-text-muted">
- {formatDate(entry.date)} at {formatTime(entry.date)}
- </p>
- </div>
- {/* Triage severity badge */}
- {isTriage && sev && (
- <span className={`shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${sev.bg} ${sev.color}`}>
- <span className={`w-1.5 h-1.5 rounded-full ${sev.dot}`} />
- {sev.label}
- </span>
- )}
- {/* Booking status badge */}
- {!isTriage && !isCall && stat && (
- <span className={`shrink-0 inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${stat.bg} ${stat.color}`}>
- {stat.label}
- </span>
- )}
- {/* Call status badge */}
- {isCall && callSt && (
- <span className={`shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${callSt.bg} ${callSt.color}`}>
- <span className={`w-1.5 h-1.5 rounded-full ${callSt.dot}`} />
- {callSt.label}
- </span>
- )}
- {/* Call severity badge (only on completed calls) */}
- {isCall && entry.callStatus ==="completed" && sev && (
- <span className={`shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${sev.bg} ${sev.color}`}>
- {entry.severity ==="critical" || entry.severity ==="high" ?"" :""}{sev.label}
- </span>
- )}
- </div>
+                          <div
+                            onClick={() => setExpandedId(isExpanded ? null : entry.id)}
+                            className={`bg-white rounded-xl p-5 border transition-all cursor-pointer hover:shadow-md ${
+                              isExpanded
+                                ? "border-teal-500 ring-2 ring-teal-500/10 shadow-sm"
+                                : "border-gray-200 hover:border-gray-300 shadow-sm"
+                            }`}
+                          >
+                            <div className="flex items-start justify-between gap-4 mb-2">
+                              <div className="flex items-start gap-3">
+                                <div className="w-10 h-10 rounded-xl bg-teal-50 border border-teal-100 flex items-center justify-center text-teal-700 shrink-0">
+                                  {isCall ? (
+                                    <Phone className="w-5 h-5" />
+                                  ) : isTriage ? (
+                                    <Bot className="w-5 h-5" />
+                                  ) : (
+                                    <Building2 className="w-5 h-5" />
+                                  )}
+                                </div>
+                                <div>
+                                  <h3 className="font-bold text-gray-900 text-sm sm:text-base">{entry.title}</h3>
+                                  <p className="text-xs text-gray-400 font-medium flex items-center gap-1.5 mt-0.5">
+                                    <Clock className="w-3 h-3" />
+                                    {formatDate(entry.date)} at {formatTime(entry.date)}
+                                  </p>
+                                </div>
+                              </div>
 
- {/* Call notes */}
- {isCall && entry.notes && (
- <p className="text-xs text-text-muted mb-1"> {entry.notes}</p>
- )}
+                              <div className="flex items-center gap-2 shrink-0">
+                                {isTriage && entry.severity && (
+                                  <SeverityBadge severity={entry.severity} />
+                                )}
+                                {!isTriage && !isCall && entry.status && (
+                                  <span
+                                    className={`px-2.5 py-0.5 rounded-full text-xs font-semibold border ${
+                                      entry.status === "completed"
+                                        ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                        : "bg-teal-50 text-teal-700 border-teal-200"
+                                    }`}
+                                  >
+                                    {entry.status}
+                                  </span>
+                                )}
+                                {isCall && (
+                                  <span
+                                    className={`px-2.5 py-0.5 rounded-full text-xs font-semibold border ${
+                                      entry.callStatus === "completed"
+                                        ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                        : "bg-gray-100 text-gray-700 border-gray-200"
+                                    }`}
+                                  >
+                                    {entry.callStatus}
+                                  </span>
+                                )}
+                                {isExpanded ? (
+                                  <ChevronUp className="w-4 h-4 text-gray-400" />
+                                ) : (
+                                  <ChevronDown className="w-4 h-4 text-gray-400" />
+                                )}
+                              </div>
+                            </div>
 
- {isTriage && entry.symptoms.length > 0 && (
- <div className="flex flex-wrap gap-1.5 mb-2">
- {entry.symptoms.map((s) => (
- <span key={s} className="px-2 py-0.5 rounded-md bg-surface border border-border text-xs text-text-muted">{s}</span>
- ))}
- </div>
- )}
+                            {/* Symptoms Pills */}
+                            {isTriage && entry.symptoms?.length > 0 && (
+                              <div className="flex flex-wrap gap-1.5 mt-3">
+                                {entry.symptoms.map((s, idx) => (
+                                  <span
+                                    key={idx}
+                                    className="px-2.5 py-0.5 bg-gray-100 text-gray-700 border border-gray-200 rounded-md text-xs font-medium"
+                                  >
+                                    {s}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
 
- {!isTriage && !isCall && (
- <p className="text-xs text-text-muted mb-1">{entry.department} • {entry.facility}</p>
- )}
+                            {/* Recommendation / Summary preview */}
+                            {isTriage && entry.recommendation && (
+                              <div className="mt-3 p-3 rounded-lg bg-teal-50/70 border border-teal-200/80 text-xs text-teal-900 leading-relaxed font-medium">
+                                💊 {entry.recommendation.slice(0, 160)}
+                                {entry.recommendation.length > 160 ? "..." : ""}
+                              </div>
+                            )}
 
- {isTriage && entry.recommendation && (
- <div className={`rounded-lg px-3 py-2 text-xs leading-relaxed ${sev?.bg} ${sev?.color} border ${sev?.border}`}>
- 💊 {entry.recommendation.slice(0, 150)}{entry.recommendation.length > 150 ?"..." :""}
- </div>
- )}
+                            {isCall && entry.summary && (
+                              <div className="mt-3 p-3 rounded-lg bg-gray-50 border border-gray-200 text-xs text-gray-700 leading-relaxed">
+                                📋 {entry.summary.slice(0, 160)}
+                                {entry.summary.length > 160 ? "..." : ""}
+                              </div>
+                            )}
 
- {/* Call summary preview */}
- {isCall && entry.callStatus ==="completed" && entry.summary && (
- <div className={`rounded-lg px-3 py-2 text-xs leading-relaxed ${sev?.bg ||"bg-emerald-500/12"} ${sev?.color ||"text-emerald-400"} border ${sev?.border ||"border-emerald-500/20"}`}>
- 📋 {entry.summary.slice(0, 150)}{entry.summary.length > 150 ?"..." :""}
- </div>
- )}
+                            {/* Expanded Details */}
+                            {isExpanded && (
+                              <div className="mt-4 pt-4 border-t border-gray-100 space-y-3 animate-fade-in text-xs">
+                                {isTriage && entry.transcript?.length > 0 && (
+                                  <div>
+                                    <span className="font-bold text-gray-700 uppercase tracking-wider block mb-2 text-[10px]">
+                                      Consultation Transcript Excerpt
+                                    </span>
+                                    <div className="space-y-2 bg-gray-50 p-3 rounded-xl border border-gray-200">
+                                      {entry.transcript.map((msg, idx) => (
+                                        <div
+                                          key={idx}
+                                          className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
+                                        >
+                                          <div
+                                            className={`max-w-[85%] rounded-lg p-2 leading-relaxed ${
+                                              msg.role === "user"
+                                                ? "bg-teal-600 text-white"
+                                                : "bg-white border border-gray-200 text-gray-800"
+                                            }`}
+                                          >
+                                            {msg.text}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
 
- {isExpanded && (
- <div className="mt-4 pt-4 border-t border-border space-y-3 animate-fade-in">
- {/* Call details expanded */}
- {isCall && (
- <>
- {entry.summary && (
- <div>
- <p className="text-xs font-medium text-text-secondary mb-1">Call Summary</p>
- <p className="text-xs text-text-secondary leading-relaxed bg-surface border border-border rounded-xl px-3 py-2">{entry.summary}</p>
- </div>
- )}
- {!entry.summary && (
- <p className="text-xs text-text-muted">
- {entry.callStatus ==="scheduled" ?"Awaiting call…" :
- entry.callStatus ==="in-progress" ?"Call in progress…" :
- entry.callStatus ==="failed" ?"Call could not be connected." :"Call was cancelled."}
- </p>
- )}
- </>
- )}
- {isTriage && (
- <>
- <p className="text-xs text-text-muted">
- Language: <span className="text-text-secondary">{entry.lang}</span>
- </p>
- {entry.transcript.length > 0 && (
- <div>
- <p className="text-xs font-medium text-text-secondary mb-2">Conversation Excerpt</p>
- <div className="space-y-2">
- {entry.transcript.map((msg, i) => (
- <div key={i} className={`flex ${msg.role ==="user" ?"justify-end" :"justify-start"}`}>
- <div className={`max-w-[80%] rounded-xl px-3 py-2 text-xs ${
- msg.role ==="user"
- ?"bg-primary/10 border border-primary/15 text-text-secondary"
- :"bg-surface border border-border text-text-secondary"
- }`}>{msg.text.slice(0, 200)}{msg.text.length > 200 ?"..." :""}</div>
- </div>
- ))}
- </div>
- </div>
- )}
- </>
- )}
- {!isTriage && !isCall && (
- <>
- <div className="grid grid-cols-2 gap-3">
- <div>
- <p className="text-xs text-text-muted mb-0.5">Facility</p>
- <p className="text-xs text-text-secondary font-medium">{entry.facility}</p>
- </div>
- <div>
- <p className="text-xs text-text-muted mb-0.5">Status</p>
- <p className="text-xs text-text-secondary font-medium capitalize">{entry.status}</p>
- </div>
- </div>
- {entry.address && (
- <div>
- <p className="text-xs text-text-muted mb-0.5">Address</p>
- <p className="text-xs text-text-secondary">{entry.address}</p>
- </div>
- )}
- {entry.notes && (
- <div className="rounded-lg bg-surface border border-border px-3 py-2">
- <p className="text-xs text-text-muted mb-0.5">Notes</p>
- <p className="text-xs text-text-secondary leading-relaxed">{entry.notes}</p>
- </div>
- )}
- </>
- )}
- </div>
- )}
-
- <div className="mt-2 text-right">
- <span className="text-xs text-text-muted">{isExpanded ?"▲ Collapse" :"▼ Details"}</span>
- </div>
- </div>
- </div>
- );
- })}
- </div>
- </div>
- </div>
- ))}
-
- {!loading && filtered.length === 0 && timeline.length > 0 && (
- <div className="text-center py-16">
- <p className="text-text-muted">No history entries match this filter.</p>
- </div>
- )}
- </div>
- </section>
- </main>
- </div>
- );
+                                {!isTriage && !isCall && (
+                                  <div className="grid grid-cols-2 gap-3 bg-gray-50 p-3 rounded-xl border border-gray-200">
+                                    <div>
+                                      <span className="text-gray-400 font-semibold block text-[10px] uppercase">
+                                        Department
+                                      </span>
+                                      <span className="font-bold text-gray-800">{entry.department}</span>
+                                    </div>
+                                    <div>
+                                      <span className="text-gray-400 font-semibold block text-[10px] uppercase">
+                                        Facility
+                                      </span>
+                                      <span className="font-bold text-gray-800">{entry.facility}</span>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+          </div>
+        </section>
+      </main>
+    </div>
+  );
 }

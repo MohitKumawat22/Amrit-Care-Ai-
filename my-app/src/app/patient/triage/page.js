@@ -1,43 +1,15 @@
-import Link from"next/link";
-import TriageChat from"@/components/patient/TriageChat";
+"use client";
 
-export const metadata = {
- title:"AI Health Triage — AmritCare AI",
- description:"Describe your symptoms and get AI-powered triage recommendations with multilingual support.",
-};
+import Navbar from "@/components/shared/Navbar";
+import TriageChat from "@/components/patient/TriageChat";
 
 export default function TriagePage() {
- return (
- <div className="flex flex-col min-h-screen relative overflow-hidden">
- {/* Decorative orbs */}
- <div className="absolute top-10 left-[10%] w-64 h-64 rounded-full bg-primary/5 blur-3xl animate-float pointer-events-none" />
- <div className="absolute bottom-20 right-[10%] w-80 h-80 rounded-full bg-secondary/4 blur-3xl animate-float-delayed pointer-events-none" />
-
- {/* Top bar */}
- <header className="px-6 py-4 flex items-center justify-between">
- <Link
- href="/"
- className="flex items-center gap-2 no-underline"
- >
- <div className="w-8 h-8 rounded-lg from-primary to-accent flex items-center justify-center shadow">
- <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
- </div>
- <span className="text-lg font-bold tracking-tight">
- Amrit<span className="text-[#10B981]">Care</span> <span className="text-xs font-medium text-[#059669] bg-[#D1FAE5] px-1.5 py-0.5 rounded-md ml-0.5">AI</span>
- </span>
- </Link>
- <Link
- href="/patient/login"
- className="text-sm text-text-muted hover:text-foreground transition-colors no-underline"
- >
- ← Patient Portal
- </Link>
- </header>
-
- {/* Chat area */}
- <main className="flex-1 flex items-stretch px-4 pb-4">
- <TriageChat />
- </main>
- </div>
- );
+  return (
+    <div className="flex flex-col min-h-screen bg-gray-50 has-bottom-nav">
+      <Navbar />
+      <main className="flex-1 flex flex-col max-w-7xl w-full mx-auto px-4 sm:px-6 py-6">
+        <TriageChat />
+      </main>
+    </div>
+  );
 }

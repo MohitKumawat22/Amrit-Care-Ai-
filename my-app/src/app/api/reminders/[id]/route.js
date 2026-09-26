@@ -1,5 +1,5 @@
 import { NextResponse } from"next/server";
-import connectDB from"@/lib/db";
+import connectDB from "@/lib/mongodb";
 import Reminder from"@/models/Reminder";
 
 export async function GET(req, { params }) {

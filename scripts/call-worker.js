@@ -101,6 +101,30 @@ function defineModels() {
     { timestamps: true }
   );
   CallLog = mongoose.models.CallLog || mongoose.model("CallLog", CallLogSchema);
+
+  // Reminder (for missed dose escalation)
+  const ReminderSchema = new mongoose.Schema(
+    {
+      patientId: String,
+      patientName: String,
+      medicineName: String,
+      dosage: String,
+      times: [String],
+      startDate: Date,
+      isActive: { type: Boolean, default: true },
+      takenLog: [
+        {
+          scheduledTime: Date,
+          takenAt: Date,
+          status: String,
+          quantityConsumed: Number,
+        },
+      ],
+      lastMissedDoseAlertAt: Date,
+    },
+    { timestamps: true }
+  );
+  Reminder = mongoose.models.Reminder || mongoose.model("Reminder", ReminderSchema);
 }
 
 // ─── DB Connection ─────────────────────────────────────────────
@@ -264,22 +288,98 @@ async function processDueCalls() {
   }
 }
 
+// ─── Missed Dose Escalation Poller (n8n Webhook) ──────────────
+async function checkMissedDoses() {
+  const N8N_MISSED_DOSE_WEBHOOK_URL = process.env.N8N_MISSED_DOSE_WEBHOOK_URL;
+  try {
+    const now = new Date();
+    const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    const activeReminders = await Reminder.find({ isActive: true }).lean();
+    if (!activeReminders || activeReminders.length === 0) return;
+
+    for (const reminder of activeReminders) {
+      if (!Array.isArray(reminder.times)) continue;
+
+      for (const timeStr of reminder.times) {
+        const parts = timeStr.split(":");
+        const hours = parseInt(parts[0], 10);
+        const minutes = parseInt(parts[1], 10);
+        if (isNaN(hours) || isNaN(minutes)) continue;
+
+        const scheduledDoseTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes);
+
+        // Check if dose was scheduled > 2 hours ago today
+        if (scheduledDoseTime >= todayStart && scheduledDoseTime <= twoHoursAgo) {
+          // Check if this dose was logged as "taken"
+          const isTaken = (reminder.takenLog || []).some((log) => {
+            const logTime = new Date(log.scheduledTime);
+            return (
+              log.status === "taken" &&
+              logTime.getFullYear() === now.getFullYear() &&
+              logTime.getMonth() === now.getMonth() &&
+              logTime.getDate() === now.getDate() &&
+              logTime.getHours() === hours &&
+              logTime.getMinutes() === minutes
+            );
+          });
+
+          // Also check if already alerted in the last 6 hours to avoid spam
+          const lastAlert = reminder.lastMissedDoseAlertAt ? new Date(reminder.lastMissedDoseAlertAt) : null;
+          const recentlyAlerted = lastAlert && (now.getTime() - lastAlert.getTime() < 6 * 60 * 60 * 1000);
+
+          if (!isTaken && !recentlyAlerted) {
+            const missedPayload = {
+              patientId: reminder.patientId,
+              patientName: reminder.patientName || "Patient",
+              medicineName: reminder.medicineName,
+              dosage: reminder.dosage,
+              missedAt: scheduledDoseTime.toISOString(),
+              alertedAt: now.toISOString(),
+            };
+
+            if (N8N_MISSED_DOSE_WEBHOOK_URL) {
+              fetch(N8N_MISSED_DOSE_WEBHOOK_URL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(missedPayload),
+              })
+                .then(() => console.log(`  ⚠️ Missed dose escalation sent to n8n for ${reminder.medicineName}`))
+                .catch((err) => console.error("  ✗ Failed to send missed dose webhook:", err.message));
+            } else {
+              console.log("[n8n Missed Dose] (N8N_MISSED_DOSE_WEBHOOK_URL unset) Payload:", missedPayload);
+            }
+
+            // Update reminder record to prevent duplicate spam
+            await Reminder.findByIdAndUpdate(reminder._id, { lastMissedDoseAlertAt: now }).catch(() => {});
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error("Error in checkMissedDoses (non-fatal):", err.message);
+  }
+}
+
 // ─── Entry point ──────────────────────────────────────────────
 (async () => {
-  console.log("🚀 AmritCare Call Worker starting...");
+  console.log("🚀 AmritCare Call & Escalation Worker starting...");
   await connectDB();
   defineModels();
 
   // Run immediately on startup, then every 30 seconds
   await processDueCalls();
+  await checkMissedDoses();
 
   cron.schedule("*/30 * * * * *", async () => {
     try {
       await processDueCalls();
+      await checkMissedDoses();
     } catch (err) {
       console.error("Worker poll error:", err);
     }
   });
 
-  console.log("⏱️  Polling every 30 seconds. Press Ctrl+C to stop.");
+  console.log("⏱️  Polling calls & missed doses every 30 seconds. Press Ctrl+C to stop.");
 })();

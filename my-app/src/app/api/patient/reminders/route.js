@@ -1,5 +1,5 @@
 import { NextResponse } from"next/server";
-import connectDB from"@/lib/db";
+import connectDB from"@/lib/mongodb";
 import MedicineReminder from"@/models/MedicineReminder";
 
 // GET — Fetch all reminders for a patient
@@ -45,18 +45,43 @@ export async function POST(request) {
  );
  }
 
- const reminder = await MedicineReminder.create({
- patientId,
- medicineName,
- time,
- frequency: frequency ||"daily",
- isActive: true,
- });
+    const reminder = await MedicineReminder.create({
+      patientId,
+      medicineName,
+      time,
+      frequency: frequency || "daily",
+      isActive: true,
+    });
 
- return NextResponse.json(
- { message:"Reminder created", reminder },
- { status: 201 }
- );
+    // Outbound n8n Reminder Webhook (non-blocking)
+    try {
+      const payload = {
+        patientId,
+        medicineName,
+        dosage: body.dosage || "1 dose",
+        phone: body.phone || "",
+        scheduledTime: time,
+        reminderId: reminder._id,
+        createdAt: new Date().toISOString(),
+      };
+      const webhookUrl = process.env.N8N_REMINDER_WEBHOOK_URL;
+      if (webhookUrl) {
+        fetch(webhookUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        }).catch((err) => console.error("[n8n Reminder Webhook] Dispatch error (non-fatal):", err.message));
+      } else {
+        console.log("[n8n Reminder Webhook] (N8N_REMINDER_WEBHOOK_URL unset) Reminder payload:", payload);
+      }
+    } catch (whErr) {
+      console.error("[n8n Reminder Webhook] Unexpected error (non-fatal):", whErr);
+    }
+
+    return NextResponse.json(
+      { message: "Reminder created", reminder },
+      { status: 201 }
+    );
  } catch (error) {
  console.error("Reminder create error:", error);
  return NextResponse.json(

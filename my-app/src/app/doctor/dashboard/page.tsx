@@ -1,169 +1,258 @@
 "use client";
 
-import { useState, useEffect } from"react";
-import { useSession } from"next-auth/react";
-import { useRouter } from"next/navigation";
+import { useState, useEffect } from "react";
+import { useSession } from "next-auth/react";
+import { useRouter } from "next/navigation";
+import DoctorNavbar from "@/components/shared/DoctorNavbar";
+import {
+  Calendar,
+  Clock,
+  User,
+  CheckCircle2,
+  AlertCircle,
+  Phone,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Stethoscope,
+} from "lucide-react";
 
 interface Appointment {
- _id: string;
- patientId: { name: string; email: string };
- patientInfo: {
- name: string;
- age: number;
- phone: string;
- complaint: string;
- };
- slot: {
- day: string;
- time: string;
- };
- status:"pending" |"confirmed" |"cancelled";
- createdAt: string;
+  _id: string;
+  patientId: { name: string; email: string };
+  patientInfo: {
+    name: string;
+    age: number;
+    phone: string;
+    complaint: string;
+  };
+  slot: {
+    day: string;
+    time: string;
+  };
+  status: "pending" | "confirmed" | "cancelled";
+  createdAt: string;
 }
 
 export default function DoctorDashboard() {
- const { data: session, status } = useSession();
- const router = useRouter();
- const [appointments, setAppointments] = useState<Appointment[]>([]);
- const [loading, setLoading] = useState(true);
- const [expandedId, setExpandedId] = useState<string | null>(null);
+  const { data: session, status } = useSession();
+  const router = useRouter();
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
- useEffect(() => {
- if (status ==="unauthenticated" || (session?.user as any)?.role !=="doctor") {
- router.push("/login");
- return;
- }
- fetchAppointments();
- }, [status, session]);
+  useEffect(() => {
+    if (status === "unauthenticated" || (session?.user as any)?.role !== "doctor") {
+      router.push("/doctor/login");
+      return;
+    }
+    fetchAppointments();
+  }, [status, session, router]);
 
- const fetchAppointments = async () => {
- try {
- const res = await fetch("/api/appointments/doctor");
- const data = await res.json();
- setAppointments(data.appointments || []);
- } catch (err) {
- console.error("Failed to fetch appointments:", err);
- } finally {
- setLoading(false);
- }
- };
+  const fetchAppointments = async () => {
+    try {
+      const res = await fetch("/api/appointments/doctor");
+      const data = await res.json();
+      setAppointments(data.appointments || []);
+    } catch (err) {
+      console.error("Failed to fetch appointments:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
- const markComplete = async (id: string) => {
- try {
- const res = await fetch(`/api/appointments/${id}`, {
- method:"PUT",
- headers: {"Content-Type":"application/json" },
- body: JSON.stringify({ status:"confirmed" }),
- });
- if (res.ok) {
- setAppointments((prev) =>
- prev.map((app) => (app._id === id ? { ...app, status:"confirmed" } : app))
- );
- }
- } catch (err) {
- console.error("Failed to update status:", err);
- }
- };
+  const markComplete = async (id: string) => {
+    try {
+      const res = await fetch(`/api/appointments/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "confirmed" }),
+      });
+      if (res.ok) {
+        setAppointments((prev) =>
+          prev.map((app) => (app._id === id ? { ...app, status: "confirmed" } : app))
+        );
+      }
+    } catch (err) {
+      console.error("Failed to update status:", err);
+    }
+  };
 
- if (status ==="loading") return <div className="p-10 text-center">Loading session...</div>;
+  if (status === "loading") {
+    return (
+      <div className="min-h-screen bg-[#0B0F1A] flex items-center justify-center text-slate-400">
+        <div className="flex items-center gap-3">
+          <span className="w-5 h-5 border-2 border-teal-500/30 border-t-teal-500 rounded-full animate-spin" />
+          <span className="text-sm font-medium">Verifying provider session...</span>
+        </div>
+      </div>
+    );
+  }
 
- return (
- <div className="min-h-screen bg-slate-50 py-12 px-6">
- <div className="max-w-4xl mx-auto">
- <header className="flex justify-between items-center mb-10">
- <div>
- <h1 className="text-3xl font-extrabold text-gray-900">Doctor Dashboard</h1>
- <p className="text-gray-500 font-medium">Managing your patient appointments</p>
- </div>
- <div className="bg-emerald-600 text-white px-4 py-2 rounded-xl text-sm font-bold shadow-lg">
- Today: {new Date().toLocaleDateString("en-US", { weekday: 'long', month: 'short', day: 'numeric' })}
- </div>
- </header>
+  const confirmedCount = appointments.filter((a) => a.status === "confirmed").length;
+  const pendingCount = appointments.filter((a) => a.status === "pending").length;
 
- {loading ? (
- <div className="flex justify-center py-20 animate-pulse text-gray-400">Loading appointments...</div>
- ) : appointments.length === 0 ? (
- <div className="bg-white rounded-3xl p-16 text-center border-2 border-dashed border-gray-200">
- <div className="text-5xl mb-4"></div>
- <h2 className="text-xl font-bold text-gray-900 mb-2">No Appointments</h2>
- <p className="text-gray-500">You don't have any appointments scheduled for today.</p>
- </div>
- ) : (
- <div className="space-y-4">
- {appointments.map((app) => (
- <div
- key={app._id}
- className={`bg-white rounded-3xl border transition-all overflow-hidden ${
- expandedId === app._id ?"border-emerald-400 ring-4 ring-emerald-500/5 shadow-xl scale-[1.02]" :"border-gray-100 hover:border-gray-200 shadow-sm"
- }`}
- >
- <div
- className="p-6 cursor-pointer flex items-center justify-between"
- onClick={() => setExpandedId(expandedId === app._id ? null : app._id)}
- >
- <div className="flex items-center gap-5">
- <div className="w-14 h-14 rounded-2xl bg-emerald-50 flex items-center justify-center text-2xl">
- 👤
- </div>
- <div>
- <h3 className="font-bold text-gray-900 text-lg">{app.patientInfo.name}</h3>
- <p className="text-sm font-medium text-gray-500">
- {app.slot.day} • <span className="text-emerald-600 font-bold">{app.slot.time}</span>
- </p>
- </div>
- </div>
- <div className="flex items-center gap-4">
- <span
- className={`px-3 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-widest ${
- app.status ==="confirmed" ?"bg-green-100 text-green-700" :"bg-yellow-100 text-yellow-700"
- }`}
- >
- {app.status}
- </span>
- <svg
- className={`w-5 h-5 text-gray-400 transition-transform ${expandedId === app._id ?"rotate-180" :""}`}
- fill="none"
- stroke="currentColor"
- viewBox="0 0 24 24"
- >
- <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M19 9l-7 7-7-7" />
- </svg>
- </div>
- </div>
+  return (
+    <div className="min-h-screen bg-[#0B0F1A] text-slate-100 flex flex-col">
+      <DoctorNavbar doctorName={session?.user?.name || "Doctor"} />
 
- {expandedId === app._id && (
- <div className="px-6 pb-6 pt-2 bg-emerald-50/30 border-t border-gray-100 animate-in fade-in slide-in-from-top-2">
- <div className="grid grid-cols-2 gap-8 mb-6">
- <div className="space-y-4">
- <div>
- <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1">Patient Details</label>
- <p className="text-sm text-gray-700 font-medium">Age: {app.patientInfo.age} | Phone: {app.patientInfo.phone}</p>
- </div>
- <div>
- <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1">Chief Complaint</label>
- <div className="bg-white p-3 rounded-xl border border-gray-100 text-sm text-gray-800 leading-relaxed italic shadow-sm">"{app.patientInfo.complaint}"
- </div>
- </div>
- </div>
- <div className="flex flex-col justify-end items-end gap-3">
- {app.status ==="pending" && (
- <button
- onClick={() => markComplete(app._id)}
- className="bg-green-600 text-white px-6 py-2.5 rounded-xl text-sm font-bold hover:bg-green-700 transition-all shadow-lg shadow-green-500/20 flex items-center gap-2"
- >
- <span>✓</span> Confirm Appointment
- </button>
- )}
- <button className="text-red-500 text-xs font-bold hover:underline">Cancel Slot</button>
- </div>
- </div>
- </div>
- )}
- </div>
- ))}
- </div>
- )}
- </div>
- </div>
- );
+      <main className="flex-1 max-w-5xl w-full mx-auto px-4 sm:px-6 py-8">
+        {/* Welcome Banner */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+          <div>
+            <h1 className="text-2xl font-bold text-white tracking-tight">Clinical Appointments</h1>
+            <p className="text-xs text-slate-400 mt-1">
+              Manage incoming triage bookings and patient consultations
+            </p>
+          </div>
+
+          <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-teal-500/10 border border-teal-500/20 text-teal-300 text-xs font-semibold self-start sm:self-auto">
+            <Calendar className="w-3.5 h-3.5" />
+            <span>
+              {new Date().toLocaleDateString("en-IN", {
+                weekday: "short",
+                day: "numeric",
+                month: "short",
+              })}
+            </span>
+          </div>
+        </div>
+
+        {/* Stats Summary */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+          <div className="bg-slate-900 border border-white/[0.08] rounded-2xl p-5 shadow-sm">
+            <span className="text-xs font-semibold uppercase tracking-wider text-slate-400 block mb-1">
+              Total Appointments
+            </span>
+            <p className="text-2xl font-bold text-white">{appointments.length}</p>
+          </div>
+          <div className="bg-slate-900 border border-white/[0.08] rounded-2xl p-5 shadow-sm">
+            <span className="text-xs font-semibold uppercase tracking-wider text-slate-400 block mb-1">
+              Confirmed / Active
+            </span>
+            <p className="text-2xl font-bold text-teal-400">{confirmedCount}</p>
+          </div>
+          <div className="bg-slate-900 border border-white/[0.08] rounded-2xl p-5 shadow-sm">
+            <span className="text-xs font-semibold uppercase tracking-wider text-slate-400 block mb-1">
+              Awaiting Review
+            </span>
+            <p className="text-2xl font-bold text-amber-400">{pendingCount}</p>
+          </div>
+        </div>
+
+        {/* List of appointments */}
+        {loading ? (
+          <div className="space-y-4">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="bg-slate-900 border border-white/[0.06] rounded-2xl p-6 animate-pulse space-y-3">
+                <div className="h-4 bg-slate-800 rounded w-1/3" />
+                <div className="h-3 bg-slate-800 rounded w-1/4" />
+              </div>
+            ))}
+          </div>
+        ) : appointments.length === 0 ? (
+          <div className="bg-slate-900 border border-white/[0.06] rounded-3xl p-12 text-center">
+            <div className="w-16 h-16 rounded-2xl bg-teal-500/10 border border-teal-500/20 flex items-center justify-center mx-auto mb-4 text-teal-400">
+              <Stethoscope className="w-8 h-8" />
+            </div>
+            <h2 className="text-lg font-bold text-white mb-1">No Consultations Scheduled</h2>
+            <p className="text-xs text-slate-400 max-w-sm mx-auto">
+              You currently have no patient appointments booked for today.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {appointments.map((app) => {
+              const isExpanded = expandedId === app._id;
+              const isConfirmed = app.status === "confirmed";
+
+              return (
+                <div
+                  key={app._id}
+                  className={`bg-slate-900 border rounded-2xl transition-all overflow-hidden ${
+                    isExpanded
+                      ? "border-teal-500/40 ring-1 ring-teal-500/20 shadow-xl"
+                      : "border-white/[0.08] hover:border-white/[0.14]"
+                  }`}
+                >
+                  <div
+                    className="p-5 sm:p-6 cursor-pointer flex items-center justify-between gap-4"
+                    onClick={() => setExpandedId(isExpanded ? null : app._id)}
+                  >
+                    <div className="flex items-center gap-4 min-w-0">
+                      <div className="w-12 h-12 rounded-xl bg-teal-500/10 border border-teal-500/20 flex items-center justify-center text-teal-300 font-bold text-base shrink-0">
+                        <User className="w-6 h-6" />
+                      </div>
+                      <div className="min-w-0">
+                        <h3 className="font-bold text-white text-base truncate">{app.patientInfo?.name}</h3>
+                        <p className="text-xs text-slate-400 flex items-center gap-2 mt-0.5">
+                          <span>{app.slot?.day}</span>
+                          <span>•</span>
+                          <span className="text-teal-400 font-semibold">{app.slot?.time}</span>
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3 shrink-0">
+                      <span
+                        className={`px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider border ${
+                          isConfirmed
+                            ? "bg-teal-500/15 text-teal-300 border-teal-500/30"
+                            : "bg-amber-500/15 text-amber-300 border-amber-500/30"
+                        }`}
+                      >
+                        {app.status}
+                      </span>
+                      {isExpanded ? (
+                        <ChevronUp className="w-4 h-4 text-slate-400" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4 text-slate-400" />
+                      )}
+                    </div>
+                  </div>
+
+                  {isExpanded && (
+                    <div className="px-6 pb-6 pt-2 bg-slate-950/40 border-t border-white/[0.06] animate-fade-in text-xs space-y-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="bg-slate-900 border border-white/[0.06] rounded-xl p-3.5 space-y-1.5">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                            Patient Info
+                          </span>
+                          <p className="text-slate-200">
+                            Age: <span className="font-semibold text-white">{app.patientInfo?.age || "—"}</span> | Phone:{" "}
+                            <span className="font-semibold text-white">{app.patientInfo?.phone || "—"}</span>
+                          </p>
+                        </div>
+
+                        <div className="bg-slate-900 border border-white/[0.06] rounded-xl p-3.5 space-y-1.5">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                            Chief Complaint
+                          </span>
+                          <p className="text-slate-300 leading-relaxed italic">
+                            "{app.patientInfo?.complaint || "No chief complaint recorded"}"
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-end gap-3 pt-2">
+                        {app.status === "pending" && (
+                          <button
+                            onClick={() => markComplete(app._id)}
+                            className="btn-primary text-xs py-2 px-4 shadow-sm"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                            Confirm Consultation
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </main>
+    </div>
+  );
 }

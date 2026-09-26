@@ -1,5 +1,5 @@
 import { NextResponse } from"next/server";
-import connectDB from"@/lib/db";
+import connectDB from"@/lib/mongodb";
 import Triage from"@/models/Triage";
 
 // GET — Fetch all triage sessions for a patient

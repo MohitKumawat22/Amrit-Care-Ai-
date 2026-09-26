@@ -1,5 +1,5 @@
 import { NextResponse } from"next/server";
-import connectDB from"@/lib/db";
+import connectDB from"@/lib/mongodb";
 import CallLog from"@/models/CallLog";
 
 // ─── Severity keyword detection ─────────────────────────────────────────────
@@ -289,11 +289,43 @@ Few-shot example output:
  }
  }
 
- callLog.status ="completed";
- callLog.summary = summary;
- callLog.severity = severity;
- callLog.memory = memory;
- await callLog.save();
+  callLog.status = "completed";
+  callLog.summary = summary;
+  callLog.severity = severity;
+  callLog.memory = memory;
+  await callLog.save();
+
+  // Outbound n8n Alert Webhook for critical / high severity
+  if (severity === "critical" || severity === "high") {
+    try {
+      const patientName = callLog.context?.patient?.firstName
+        ? `${callLog.context.patient.firstName} ${callLog.context.patient.lastName || ""}`.trim()
+        : (callLog.overrideName || "Unknown");
+
+      const alertPayload = {
+        patientId: callLog.patientId,
+        patientName,
+        severity,
+        summary,
+        doctorId: callLog.context?.patient?.assignedDoctorId || null,
+        callSid: callLog.callSid,
+        completedAt: new Date().toISOString(),
+      };
+
+      const alertUrl = process.env.N8N_ALERT_WEBHOOK_URL;
+      if (alertUrl) {
+        fetch(alertUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(alertPayload),
+        }).catch((err) => console.error("[n8n Alert Webhook] Dispatch error (non-fatal):", err.message));
+      } else {
+        console.log("[n8n Alert Webhook] (N8N_ALERT_WEBHOOK_URL unset) Alert payload:", alertPayload);
+      }
+    } catch (alertErr) {
+      console.error("[n8n Alert Webhook] Unexpected error (non-fatal):", alertErr);
+    }
+  }
  }
 
  return new Response(

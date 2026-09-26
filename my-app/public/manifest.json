@@ -1,0 +1,65 @@
+{
+  "name": "AmritCare AI — Clinical Health Platform",
+  "short_name": "AmritCare",
+  "description": "AI-powered clinical triage, nearby hospital locator, and smart medicine reminders.",
+  "start_url": "/",
+  "id": "/",
+  "display": "standalone",
+  "background_color": "#FFFFFF",
+  "theme_color": "#0D9488",
+  "orientation": "portrait",
+  "scope": "/",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": ["medical", "health", "lifestyle", "productivity"],
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "AI Symptom Triage",
+      "short_name": "Triage",
+      "description": "Describe your symptoms to the 3D AI Doctor",
+      "url": "/patient/triage",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Find Nearby Hospitals",
+      "short_name": "Hospitals",
+      "description": "Locate nearest hospitals and clinics",
+      "url": "/patient/locate",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Medicine Reminders",
+      "short_name": "Reminders",
+      "description": "Check prescription schedule and stock",
+      "url": "/reminders",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Health Timeline",
+      "short_name": "Timeline",
+      "description": "View past triages, calls, and visits",
+      "url": "/patient/history",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}
