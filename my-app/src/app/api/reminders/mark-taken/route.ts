@@ -1,38 +1,57 @@
 import { NextRequest, NextResponse } from"next/server";
-import connectDB from"@/lib/mongodb";
-import Reminder from"@/models/Reminder";
+import supabase from"@/lib/supabase";
 
 export async function POST(request: NextRequest) {
  try {
- await connectDB();
  const { reminderId, scheduledTime, status } = await request.json();
 
  if (!reminderId || !scheduledTime || !status) {
  return NextResponse.json({ error:"Missing required fields" }, { status: 400 });
  }
 
- const reminder = await Reminder.findById(reminderId);
+ const { data: reminder, error } = await supabase
+ .from("reminders")
+ .select("*")
+ .eq("id", reminderId)
+ .single();
 
- if (!reminder) {
+ if (error || !reminder) {
  return NextResponse.json({ error:"Reminder not found" }, { status: 404 });
  }
 
+ const takenLog = reminder.taken_log || [];
+ let remainingQuantity = reminder.remaining_quantity;
+
  // Logic for quantity deduction
- if (status ==="taken") {
- reminder.remainingQuantity = Math.max(0, reminder.remainingQuantity - reminder.tabletsPerDose);
+ if (status === "taken") {
+ remainingQuantity = Math.max(0, remainingQuantity - reminder.tablets_per_dose);
  }
 
  // Add log entry
- reminder.takenLog.push({
- scheduledTime: new Date(scheduledTime),
- takenAt: status ==="taken" ? new Date() : undefined,
- status: status as"taken" |"missed" |"skipped",
- quantityConsumed: status ==="taken" ? reminder.tabletsPerDose : 0
+ takenLog.push({
+ scheduledTime: new Date(scheduledTime).toISOString(),
+ takenAt: status === "taken" ? new Date().toISOString() : null,
+ status: status,
+ quantityConsumed: status === "taken" ? reminder.tablets_per_dose : 0,
  });
 
- await reminder.save();
+ const { data: updated, error: updateErr } = await supabase
+ .from("reminders")
+ .update({
+ remaining_quantity: remainingQuantity,
+ taken_log: takenLog,
+ updated_at: new Date().toISOString(),
+ })
+ .eq("id", reminderId)
+ .select()
+ .single();
 
- return NextResponse.json({ reminder }, { status: 200 });
+ if (updateErr) {
+ console.error("Mark Taken Update Error:", updateErr);
+ return NextResponse.json({ error:"Failed to mark reminder as taken" }, { status: 500 });
+ }
+
+ return NextResponse.json({ reminder: updated }, { status: 200 });
  } catch (error) {
  console.error("Mark Taken Error:", error);
  return NextResponse.json({ error:"Failed to mark reminder as taken" }, { status: 500 });

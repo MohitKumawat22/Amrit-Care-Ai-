@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import connectDB from "@/lib/mongodb";
-import CallLog from "@/models/CallLog";
-import Reminder from "@/models/Reminder";
+import supabase from "@/lib/supabase";
 
 /**
  * Inbound webhook receiver for n8n automation callbacks.
@@ -37,77 +35,103 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    await connectDB();
     let updatedDoc: any = null;
     let docType = "";
 
     // Case 1: Reminder update
     if (target === "Reminder" || target === "reminder" || reminderId) {
       docType = "Reminder";
-      const reminder = await Reminder.findById(targetId);
-      if (!reminder) {
+      const { data: reminder, error: fetchErr } = await supabase.from("reminders").select("*").eq("id", targetId).single();
+      
+      if (fetchErr || !reminder) {
         return NextResponse.json({ error: `Reminder not found with id ${targetId}` }, { status: 404 });
       }
 
+      const updates: any = {};
+      
       // If callback reports medicine was marked taken via WhatsApp / n8n button
       if (status === "taken" || action === "mark_taken") {
-        reminder.remainingQuantity = Math.max(0, reminder.remainingQuantity - (reminder.tabletsPerDose || 1));
-        reminder.takenLog.push({
-          scheduledTime: new Date(),
-          takenAt: new Date(),
+        updates.remaining_quantity = Math.max(0, reminder.remaining_quantity - (reminder.tablets_per_dose || 1));
+        
+        const takenLog = reminder.taken_log || [];
+        takenLog.push({
+          scheduledTime: new Date().toISOString(),
+          takenAt: new Date().toISOString(),
           status: "taken",
-          quantityConsumed: reminder.tabletsPerDose || 1,
+          quantityConsumed: reminder.tablets_per_dose || 1,
         });
+        updates.taken_log = takenLog;
       }
 
       if (message) {
-        reminder.notes = reminder.notes
+        updates.notes = reminder.notes
           ? `${reminder.notes} | [n8n]: ${message}`
           : `[n8n]: ${message}`;
       }
 
-      await reminder.save();
-      updatedDoc = reminder;
+      if (Object.keys(updates).length > 0) {
+        const { data: updated, error: updateErr } = await supabase.from("reminders").update(updates).eq("id", targetId).select().single();
+        if (updateErr) throw updateErr;
+        updatedDoc = updated;
+      } else {
+        updatedDoc = reminder;
+      }
     }
     // Case 2: CallLog / Alert update
     else if (target === "CallLog" || target === "call" || target === "alert" || callId || callLogId) {
       docType = "CallLog";
-      const callLog = await CallLog.findById(targetId);
-      if (!callLog) {
+      const { data: callLog, error: fetchErr } = await supabase.from("call_logs").select("*").eq("id", targetId).single();
+      
+      if (fetchErr || !callLog) {
         return NextResponse.json({ error: `CallLog not found with id ${targetId}` }, { status: 404 });
       }
 
+      const updates: any = {};
+
       if (status) {
-        callLog.notes = callLog.notes
+        updates.notes = callLog.notes
           ? `${callLog.notes} | [n8n Status: ${status}]`
           : `[n8n Status: ${status}]`;
       }
 
       if (acknowledgedBy) {
-        callLog.notes = `${callLog.notes || ""} | [Ack by: ${acknowledgedBy}]`;
+        updates.notes = `${updates.notes || callLog.notes || ""} | [Ack by: ${acknowledgedBy}]`;
       }
 
       if (message) {
-        callLog.notes = `${callLog.notes || ""} | [n8n]: ${message}`;
+        updates.notes = `${updates.notes || callLog.notes || ""} | [n8n]: ${message}`;
       }
 
-      await callLog.save();
-      updatedDoc = callLog;
+      if (Object.keys(updates).length > 0) {
+        const { data: updated, error: updateErr } = await supabase.from("call_logs").update(updates).eq("id", targetId).select().single();
+        if (updateErr) throw updateErr;
+        updatedDoc = updated;
+      } else {
+        updatedDoc = callLog;
+      }
     } else {
       // Fallback: try finding in Reminder then CallLog
-      const reminder = await Reminder.findById(targetId);
+      const { data: reminder } = await supabase.from("reminders").select("*").eq("id", targetId).single();
       if (reminder) {
         docType = "Reminder";
-        if (message) reminder.notes = `${reminder.notes || ""} | [n8n]: ${message}`;
-        await reminder.save();
-        updatedDoc = reminder;
+        if (message) {
+          const notes = `${reminder.notes || ""} | [n8n]: ${message}`;
+          const { data: updated } = await supabase.from("reminders").update({ notes }).eq("id", targetId).select().single();
+          updatedDoc = updated;
+        } else {
+          updatedDoc = reminder;
+        }
       } else {
-        const callLog = await CallLog.findById(targetId);
+        const { data: callLog } = await supabase.from("call_logs").select("*").eq("id", targetId).single();
         if (callLog) {
           docType = "CallLog";
-          if (message) callLog.notes = `${callLog.notes || ""} | [n8n]: ${message}`;
-          await callLog.save();
-          updatedDoc = callLog;
+          if (message) {
+            const notes = `${callLog.notes || ""} | [n8n]: ${message}`;
+            const { data: updated } = await supabase.from("call_logs").update({ notes }).eq("id", targetId).select().single();
+            updatedDoc = updated;
+          } else {
+            updatedDoc = callLog;
+          }
         } else {
           return NextResponse.json({ error: `Document not found with id ${targetId}` }, { status: 404 });
         }

@@ -1,26 +1,19 @@
 #!/usr/bin/env node
 /**
  * call-worker.js — AmritCare AI Call Scheduler
- *
- * Run alongside the Next.js dev server:
- *   node scripts/call-worker.js
- *
- * Requires in .env.local (or set in environment):
- *   MONGODB_URI, GROK_API_KEY, TWILIO_ACCOUNT_SID,
- *   TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER, NGROK_URL
  */
 
-// Load env from .env.local (one level up from /scripts)
 const path = require("path");
 require("dotenv").config({ path: path.resolve(__dirname, "../.env.local") });
 
-const mongoose = require("mongoose");
 const cron = require("node-cron");
 const twilio = require("twilio");
+const { createClient } = require("@supabase/supabase-js");
 
 // ─── Env validation ────────────────────────────────────────────
 const {
-  MONGODB_URI,
+  NEXT_PUBLIC_SUPABASE_URL,
+  SUPABASE_SERVICE_ROLE_KEY,
   GROQ_API_KEY,
   TWILIO_ACCOUNT_SID,
   TWILIO_AUTH_TOKEN,
@@ -28,8 +21,8 @@ const {
   NGROK_URL,
 } = process.env;
 
-if (!MONGODB_URI) {
-  console.error("❌ MONGODB_URI is required in .env.local");
+if (!NEXT_PUBLIC_SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+  console.error("❌ SUPABASE env vars are required in .env.local");
   process.exit(1);
 }
 if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_PHONE_NUMBER) {
@@ -39,88 +32,7 @@ if (!NGROK_URL) {
   console.warn("⚠️  NGROK_URL is not set — webhook URL will be empty.");
 }
 
-// ─── Mongoose models (inline, no Next.js imports) ─────────────
-let Patient, Triage, Booking, CallLog;
-
-function defineModels() {
-  // Patient
-  const PatientSchema = new mongoose.Schema(
-    {
-      firstName: String, lastName: String, email: String, phone: String,
-      age: Number, blood: String,
-    },
-    { timestamps: true }
-  );
-  Patient = mongoose.models.Patient || mongoose.model("Patient", PatientSchema);
-
-  // Triage
-  const TriageSchema = new mongoose.Schema(
-    {
-      patientId: mongoose.Schema.Types.ObjectId,
-      title: String, severity: String,
-      symptoms: [String], transcript: Array, recommendation: String, lang: String,
-    },
-    { timestamps: true }
-  );
-  Triage = mongoose.models.Triage || mongoose.model("Triage", TriageSchema);
-
-  // Booking
-  const BookingSchema = new mongoose.Schema(
-    {
-      patientId: mongoose.Schema.Types.ObjectId,
-      facilityName: String, address: String, department: String,
-      status: String, notes: String,
-    },
-    { timestamps: true }
-  );
-  Booking = mongoose.models.Booking || mongoose.model("Booking", BookingSchema);
-
-  // CallLog
-  const transcriptEntrySchema = new mongoose.Schema(
-    { role: String, text: String, timestamp: Date },
-    { _id: false }
-  );
-  const CallLogSchema = new mongoose.Schema(
-    {
-      patientId: { type: mongoose.Schema.Types.ObjectId, ref: "Patient", index: true },
-      scheduledAt: Date,
-      status: { type: String, default: "scheduled", index: true },
-      callSid: { type: String, default: null },
-      // ── Retry Logic ──────────────────────────────────────────
-      retryCount: { type: Number, default: 0 },
-      nextRetryAt: { type: Date, default: null },
-      context: {
-        patient: { type: Object, default: null },
-        lastTriage: { type: Object, default: null },
-        recentBookings: { type: Array, default: [] },
-        pastCallSummaries: { type: Array, default: [] },
-        pastMemories: { type: Array, default: [] },
-      },
-      greeting: { type: String, default: null },
-      transcript: { type: [transcriptEntrySchema], default: [] },
-      summary: { type: String, default: null },
-      severity: { type: String, default: "info" },
-      notes: { type: String, default: "" },
-      // ── Post-Call Memory ─────────────────────────────────────
-      memory: {
-        symptoms: { type: Array, default: [] },
-        mood: { type: String, default: null },
-        followUpTopics: { type: Array, default: [] },
-        rawSummary: { type: String, default: null },
-      },
-    },
-    { timestamps: true }
-  );
-  CallLog = mongoose.models.CallLog || mongoose.model("CallLog", CallLogSchema);
-}
-
-// ─── DB Connection ─────────────────────────────────────────────
-async function connectDB() {
-  if (mongoose.connection.readyState >= 1) return;
-  await mongoose.connect(MONGODB_URI, { bufferCommands: false });
-  console.log("✅ MongoDB connected");
-  defineModels();
-}
+const supabase = createClient(NEXT_PUBLIC_SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 // ─── Groq API helper ──────────────────────────────────────────
 async function callGroq(messages, maxTokens = 80) {
@@ -151,39 +63,25 @@ async function callGroq(messages, maxTokens = 80) {
 
 // ─── Context fetcher ──────────────────────────────────────────
 async function fetchPatientContext(patientId) {
-  const [patient, latestTriages, recentBookings, pastCalls, pastMemoryLogs] = await Promise.all([
-    Patient.findById(patientId).lean(),
-    Triage.find({ patientId }).sort({ createdAt: -1 }).limit(1).lean(),
-    Booking.find({ patientId, status: { $in: ["upcoming", "completed"] } })
-      .sort({ createdAt: -1 })
-      .limit(2)
-      .lean(),
-    CallLog.find({ patientId, status: "completed" })
-      .sort({ createdAt: -1 })
-      .limit(3)
-      .select("summary severity createdAt")
-      .lean(),
-    // Pull last 3 calls that have memory extracted
-    CallLog.find({ patientId, status: "completed", "memory.mood": { $ne: null } })
-      .sort({ createdAt: -1 })
-      .limit(3)
-      .select("memory createdAt")
-      .lean(),
-  ]);
+  const { data: patient } = await supabase.from('patients').select('*').eq('id', patientId).single();
+  const { data: latestTriages } = await supabase.from('triages').select('*').eq('patient_id', patientId).order('created_at', { ascending: false }).limit(1);
+  const { data: recentBookings } = await supabase.from('bookings').select('*').eq('patient_id', patientId).in('status', ['upcoming', 'completed']).order('created_at', { ascending: false }).limit(2);
+  const { data: pastCalls } = await supabase.from('call_logs').select('summary, severity, created_at').eq('patient_id', patientId).eq('status', 'completed').order('created_at', { ascending: false }).limit(3);
+  const { data: pastMemoryLogs } = await supabase.from('call_logs').select('memory, created_at').eq('patient_id', patientId).eq('status', 'completed').not('memory->mood', 'is', null).order('created_at', { ascending: false }).limit(3);
 
   return {
     patient,
-    lastTriage: latestTriages[0] || null,
-    recentBookings,
-    pastCallSummaries: pastCalls,
-    pastMemories: pastMemoryLogs,
+    lastTriage: latestTriages?.[0] || null,
+    recentBookings: recentBookings || [],
+    pastCallSummaries: pastCalls || [],
+    pastMemories: pastMemoryLogs || [],
   };
 }
 
 // ─── Greeting generator ───────────────────────────────────────
 async function generateGreeting(context, notes, overrideName) {
-  const { patient, lastTriage, pastCallSummaries, pastMemories } = context;
-  const displayName = overrideName || patient?.firstName || "there";
+  const { patient, pastMemories } = context;
+  const displayName = overrideName || patient?.first_name || "there";
 
   const systemPrompt = `You are AmritCare, a friendly neighborhood family doctor calling for a health checkup.
 You are warm, knowledgeable, and approachable — like a doctor who lives in the same colony 
@@ -201,24 +99,15 @@ Patient notes: ${notes || "none"}
 
 Example 1 (no notes):
 "Ravi, AmritCare ki taraf se call aa raha hai — aapka routine checkup tha aaj. 
-Aap kaisa feel kar rahe hain, sab theek chal raha hai?"
-
-Example 2 (patient noted headache):
-"Priya, AmritCare se call hai — aapne sir dard mention kiya tha, toh socha aapse 
-baat karte hain. Aaj kaisa feel ho raha hai aapko?"
-
-Example 3 (patient noted tiredness):
-"Arjun, AmritCare ki taraf se checkup call hai. Aapne thakaan mention ki thi — 
-abhi kaisa chal raha hai, better hai kuch?"`;
+Aap kaisa feel kar rahe hain, sab theek chal raha hai?"`;
 
   let userContent = `Patient: ${displayName}`;
 
-  // Inject structured memory from previous calls
   if (pastMemories?.length) {
     userContent += `\n\nPrevious call history (use this to follow up naturally):`;
-    pastMemories.forEach((m, i) => {
+    pastMemories.forEach((m) => {
       const mem = m.memory || {};
-      const dateStr = m.timestamp ? new Date(m.timestamp).toLocaleDateString() : "previous call";
+      const dateStr = m.created_at ? new Date(m.created_at).toLocaleDateString() : "previous call";
       userContent += `\n- [${dateStr}] Symptoms: ${(mem.symptoms || []).join(", ") || "none"}. Mood: ${mem.mood || "unknown"}. Follow up on: ${(mem.followUpTopics || []).join(", ") || "none"}.`;
     });
     userContent += `\n\nImportant:
@@ -247,51 +136,51 @@ abhi kaisa chal raha hai, better hai kuch?"`;
 // ─── Main poll worker ─────────────────────────────────────────
 async function processDueCalls() {
   const now = new Date();
-  const windowEnd = new Date(now.getTime() + 30_000); // 30-second look-ahead
+  const windowEnd = new Date(now.getTime() + 30_000).toISOString();
 
-  const dueCalls = await CallLog.find({
-    status: "scheduled",
-    scheduledAt: { $lte: windowEnd },
-  }).lean();
+  const { data: dueCalls, error } = await supabase
+    .from('call_logs')
+    .select('*')
+    .eq('status', 'scheduled')
+    .lte('scheduled_at', windowEnd);
 
-  if (dueCalls.length === 0) return;
+  if (error || !dueCalls || dueCalls.length === 0) return;
   console.log(`🔔 Found ${dueCalls.length} due call(s)`);
 
   for (const call of dueCalls) {
     try {
-      console.log(`  → Processing call ${call._id} for patient ${call.patientId}`);
+      console.log(`  → Processing call ${call.id} for patient ${call.patient_id}`);
 
       // Mark in-progress immediately to prevent double-processing
-      await CallLog.findByIdAndUpdate(call._id, { status: "in-progress" });
+      await supabase.from('call_logs').update({ status: 'in-progress' }).eq('id', call.id);
 
       // 1. Fetch full context
-      const context = await fetchPatientContext(call.patientId);
+      const context = await fetchPatientContext(call.patient_id);
 
       // 2. Generate greeting (use overrideName from scheduler form if set)
-      const greeting = await generateGreeting(context, call.notes, call.overrideName);
+      const greeting = await generateGreeting(context, call.notes, call.override_name);
 
       // 3. Save context + greeting
-      await CallLog.findByIdAndUpdate(call._id, { context, greeting });
+      await supabase.from('call_logs').update({ context, greeting }).eq('id', call.id);
 
       // 4. Get patient phone — prefer overridePhone set by the scheduler UI
-      const phoneNumber = call.overridePhone || context.patient?.phone;
+      const phoneNumber = call.override_phone || context.patient?.phone;
       if (!phoneNumber) {
-        console.error(`  ✗ Patient ${call.patientId} has no phone number`);
-        await CallLog.findByIdAndUpdate(call._id, { status: "failed" });
+        console.error(`  ✗ Patient ${call.patient_id} has no phone number`);
+        await supabase.from('call_logs').update({ status: 'failed' }).eq('id', call.id);
         continue;
       }
 
       if (!TWILIO_ACCOUNT_SID || !TWILIO_AUTH_TOKEN || !TWILIO_PHONE_NUMBER) {
-        console.warn(`  ⚠ Twilio not configured — skipping actual call for ${call._id}`);
-        await CallLog.findByIdAndUpdate(call._id, { status: "failed" });
+        console.warn(`  ⚠ Twilio not configured — skipping actual call for ${call.id}`);
+        await supabase.from('call_logs').update({ status: 'failed' }).eq('id', call.id);
         continue;
       }
 
       // 5. Fire Twilio outbound call
       const twilioClient = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
-      // Embed callLogId in URL to avoid race condition (callSid saved after call fires)
-      const webhookUrl = `${NGROK_URL}/api/twilio/voice?callLogId=${call._id}`;
-      const statusCallbackUrl = `${NGROK_URL}/api/twilio/voice?callLogId=${call._id}`;
+      const webhookUrl = `${NGROK_URL}/api/twilio/voice?callLogId=${call.id}`;
+      const statusCallbackUrl = `${NGROK_URL}/api/twilio/voice?callLogId=${call.id}`;
 
       const twilioCall = await twilioClient.calls.create({
         to: phoneNumber,
@@ -300,48 +189,49 @@ async function processDueCalls() {
         statusCallback: statusCallbackUrl,
         statusCallbackMethod: "POST",
         statusCallbackEvent: ["completed", "failed", "no-answer", "busy"],
-        // ── Voicemail detection ──────────────────────────────────
         machineDetection: "DetectMessageEnd",
         asyncAmd: true,
         asyncAmdStatusCallback: statusCallbackUrl,
         asyncAmdStatusCallbackMethod: "POST",
       });
 
-      await CallLog.findByIdAndUpdate(call._id, { callSid: twilioCall.sid });
+      await supabase.from('call_logs').update({ call_sid: twilioCall.sid }).eq('id', call.id);
       console.log(`  ✓ Call fired: SID ${twilioCall.sid} → ${phoneNumber}`);
 
       // 6. Auto-schedule next occurrence for recurring calls
       if (call.recurrence && call.recurrence !== "one-time") {
-        const nextDate = new Date(call.scheduledAt);
+        const nextDate = new Date(call.scheduled_at);
         if (call.recurrence === "weekly") nextDate.setDate(nextDate.getDate() + 7);
         if (call.recurrence === "monthly") nextDate.setDate(nextDate.getDate() + 30);
-        await CallLog.create({
-          patientId: call.patientId,
-          scheduledAt: nextDate,
+        
+        await supabase.from('call_logs').insert({
+          patient_id: call.patient_id,
+          scheduled_at: nextDate.toISOString(),
           notes: call.notes,
           status: "scheduled",
           recurrence: call.recurrence,
-          overridePhone: call.overridePhone,
-          overrideName: call.overrideName,
-          parentCallId: call.parentCallId || call._id,
+          override_phone: call.override_phone,
+          override_name: call.override_name,
+          parent_call_id: call.parent_call_id || call.id,
         });
         console.log(`  ↻ Next ${call.recurrence} call auto-scheduled for ${nextDate.toLocaleString()}`);
       }
     } catch (err) {
-      console.error(`  ✗ Failed processing call ${call._id}:`, err.message);
+      console.error(`  ✗ Failed processing call ${call.id}:`, err.message);
       // ── Retry on transient failures ────────────────────────────
-      const freshCall = await CallLog.findById(call._id).lean().catch(() => null);
-      if (freshCall && freshCall.retryCount < 2) {
-        const nextRetryAt = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
-        await CallLog.findByIdAndUpdate(call._id, {
+      const { data: freshCall } = await supabase.from('call_logs').select('retry_count').eq('id', call.id).single();
+      
+      if (freshCall && freshCall.retry_count < 2) {
+        const nextRetryAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+        await supabase.from('call_logs').update({
           status: "scheduled",
-          retryCount: freshCall.retryCount + 1,
-          nextRetryAt,
-          scheduledAt: nextRetryAt,
-        }).catch(() => {});
-        console.log(`  ↩ Retry ${freshCall.retryCount + 1}/2 scheduled at ${nextRetryAt.toLocaleTimeString()}`);
+          retry_count: freshCall.retry_count + 1,
+          next_retry_at: nextRetryAt,
+          scheduled_at: nextRetryAt,
+        }).eq('id', call.id);
+        console.log(`  ↩ Retry ${freshCall.retry_count + 1}/2 scheduled at ${new Date(nextRetryAt).toLocaleTimeString()}`);
       } else {
-        await CallLog.findByIdAndUpdate(call._id, { status: "failed" }).catch(() => {});
+        await supabase.from('call_logs').update({ status: 'failed' }).eq('id', call.id);
         console.log(`  ✗ Max retries reached — marked as failed.`);
       }
     }
@@ -351,8 +241,6 @@ async function processDueCalls() {
 // ─── Entry point ──────────────────────────────────────────────
 (async () => {
   console.log("🚀 AmritCare Call Worker starting...");
-  await connectDB();
-  defineModels();
 
   // Run immediately on startup, then every 30 seconds
   await processDueCalls();

@@ -1,47 +1,49 @@
-import { NextAuthOptions } from"next-auth";
-import CredentialsProvider from"next-auth/providers/credentials";
-import connectDB from"@/lib/mongodb";
-import User from"@/models/User";
-import bcrypt from"bcryptjs";
+import { NextAuthOptions } from "next-auth";
+import CredentialsProvider from "next-auth/providers/credentials";
+import supabase from "@/lib/supabase";
+import bcrypt from "bcryptjs";
 
 export const authOptions: NextAuthOptions = {
- providers: [
- CredentialsProvider({
- name:"credentials",
- credentials: {
- email: { label:"Email", type:"email" },
- password: { label:"Password", type:"password" },
- },
- async authorize(credentials) {
- if (!credentials?.email || !credentials?.password) {
- throw new Error("Missing credentials");
- }
+  providers: [
+    CredentialsProvider({
+      name: "credentials",
+      credentials: {
+        email: { label: "Email", type: "email" },
+        password: { label: "Password", type: "password" },
+      },
+      async authorize(credentials) {
+        if (!credentials?.email || !credentials?.password) {
+          throw new Error("Missing credentials");
+        }
 
- await connectDB();
- const user = await User.findOne({ email: credentials.email });
+        const { data: user, error } = await supabase
+          .from("users")
+          .select("*")
+          .eq("email", credentials.email)
+          .single();
 
- if (!user || !user.password) {
- throw new Error("Invalid credentials");
- }
+        if (error || !user || !user.password) {
+          throw new Error("Invalid credentials");
+        }
 
- const isCorrectPassword = await bcrypt.compare(
- credentials.password,
- user.password
- );
+        const isCorrectPassword = await bcrypt.compare(
+          credentials.password,
+          user.password
+        );
 
- if (!isCorrectPassword) {
- throw new Error("Invalid credentials");
- }
+        if (!isCorrectPassword) {
+          throw new Error("Invalid credentials");
+        }
 
- return {
- id: user._id.toString(),
- name: user.name,
- email: user.email,
- role: user.role,
- };
- },
- }),
- ],
+        return {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+        };
+      },
+    }),
+  ],
  callbacks: {
  async jwt({ token, user }) {
  if (user) {

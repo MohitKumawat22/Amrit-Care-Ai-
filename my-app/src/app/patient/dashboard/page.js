@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 import { Calendar, Star, MapPin, Search, X, Loader2, CheckCircle, Clock, Bot, Stethoscope, Users } from "lucide-react";
 import ScheduleCall from "@/components/patient/ScheduleCall";
-import MedicineReminder from "@/components/patient/MedicineReminder";
 import Navbar from "@/components/shared/Navbar";
 import EmptyState from "@/components/shared/EmptyState";
 

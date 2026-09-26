@@ -1,7 +1,5 @@
-import { NextResponse } from"next/server";
-import connectDB from "@/lib/mongodb";
-import ChatHistory from"@/models/ChatHistory";
-
+import { NextResponse } from "next/server";
+import supabase from "@/lib/supabase";
 // GET — Load chat history for a patient
 export async function GET(request) {
  try {
@@ -11,10 +9,13 @@ export async function GET(request) {
  return NextResponse.json({ messages: [], reports: [] });
  }
 
- await connectDB();
- const history = await ChatHistory.findOne({ patientId }).lean();
+ const { data: history, error } = await supabase
+ .from("chat_histories")
+ .select("*")
+ .eq("patient_id", patientId)
+ .single();
 
- if (!history) {
+ if (error || !history) {
  return NextResponse.json({ messages: [], reports: [] });
  }
 
@@ -39,39 +40,75 @@ export async function POST(request) {
  return NextResponse.json({ error:"Missing patientId" }, { status: 400 });
  }
 
- await connectDB();
+ // Check if history exists
+ const { data: existing } = await supabase
+ .from("chat_histories")
+ .select("*")
+ .eq("patient_id", patientId)
+ .single();
 
- let history = await ChatHistory.findOne({ patientId });
+ if (existing) {
+ // Update existing
+ const updates = { updated_at: new Date().toISOString() };
 
- if (!history) {
- history = new ChatHistory({ patientId, messages: [], reports: [] });
- }
-
- // If saving messages, replace the full message list
  if (messages && messages.length > 0) {
- history.messages = messages.map((m) => ({
+ updates.messages = messages.map((m) => ({
  role: m.role,
  text: m.text,
- timestamp: m.timestamp || new Date(),
+ timestamp: m.timestamp || new Date().toISOString(),
  }));
  }
 
- // If uploading a report, append it
  if (report) {
- history.reports.push({
+ const reports = existing.reports || [];
+ reports.push({
  fileName: report.fileName,
  content: report.content,
+ uploadedAt: new Date().toISOString(),
  });
+ updates.reports = reports;
  }
 
- await history.save();
+ const { error } = await supabase
+ .from("chat_histories")
+ .update(updates)
+ .eq("patient_id", patientId);
+
+ if (error) {
+ console.error("Chat history update error:", error);
+ return NextResponse.json({ error:"Failed to save chat history" }, { status: 500 });
+ }
+ } else {
+ // Create new
+ const newMessages = messages ? messages.map((m) => ({
+ role: m.role,
+ text: m.text,
+ timestamp: m.timestamp || new Date().toISOString(),
+ })) : [];
+
+ const newReports = report ? [{
+ fileName: report.fileName,
+ content: report.content,
+ uploadedAt: new Date().toISOString(),
+ }] : [];
+
+ const { error } = await supabase
+ .from("chat_histories")
+ .insert({
+ patient_id: patientId,
+ messages: newMessages,
+ reports: newReports,
+ });
+
+ if (error) {
+ console.error("Chat history insert error:", error);
+ return NextResponse.json({ error:"Failed to save chat history" }, { status: 500 });
+ }
+ }
 
  return NextResponse.json({ success: true });
  } catch (error) {
  console.error("Chat history POST error:", error);
- return NextResponse.json(
- { error:"Failed to save chat history" },
- { status: 500 }
- );
+ return NextResponse.json({ error:"Failed to save chat history" }, { status: 500 });
  }
 }

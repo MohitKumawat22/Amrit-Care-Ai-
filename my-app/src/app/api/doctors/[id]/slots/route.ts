@@ -1,30 +1,33 @@
-import { NextRequest, NextResponse } from"next/server";
-import connectDB from"@/lib/mongodb";
-import DoctorProfile from"@/models/DoctorProfile";
+import { NextRequest, NextResponse } from "next/server";
+import supabase from "@/lib/supabase";
 
 interface RouteParams {
- params: Promise<{
- id: string;
- }>;
+  params: Promise<{
+    id: string;
+  }>;
 }
 
 export async function GET(_request: NextRequest, { params }: RouteParams) {
- try {
- await connectDB();
- const { id } = await params;
+  try {
+    const { id } = await params;
 
- const profile = await DoctorProfile.findOne({ userId: id });
+    const { data: profile, error } = await supabase
+      .from("doctor_profiles")
+      .select("available_slots")
+      .eq("user_id", id)
+      .single();
 
- if (!profile) {
- return NextResponse.json({ error:"Doctor profile not found" }, { status: 404 });
- }
+    if (error || !profile) {
+      return NextResponse.json({ error: "Doctor profile not found" }, { status: 404 });
+    }
 
- // Filter slots that are NOT booked
- const availableSlots = profile.availableSlots.filter((slot: any) => !slot.isBooked);
+    const availableSlotsRaw = profile.available_slots || [];
+    // Filter slots that are NOT booked
+    const availableSlots = availableSlotsRaw.filter((slot: any) => !slot.isBooked);
 
- return NextResponse.json({ availableSlots }, { status: 200 });
- } catch (error: any) {
- console.error("Fetch Slots Error:", error);
- return NextResponse.json({ error: error.message }, { status: 500 });
- }
+    return NextResponse.json({ availableSlots }, { status: 200 });
+  } catch (error: any) {
+    console.error("Fetch Slots Error:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
 }

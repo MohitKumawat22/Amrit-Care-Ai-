@@ -1,13 +1,10 @@
 import { NextResponse } from"next/server";
 import bcrypt from"bcryptjs";
-import connectDB from"@/lib/mongodb";
-import Patient from"@/models/Patient";
+import supabase from"@/lib/supabase";
 
 export async function POST(request) {
  try {
- await connectDB();
  const body = await request.json();
-
  const { username, password } = body;
 
  if (!username || !password) {
@@ -18,14 +15,13 @@ export async function POST(request) {
  }
 
  // Find patient by username or email
- const patient = await Patient.findOne({
- $or: [
- { username: username.toLowerCase() },
- { email: username.toLowerCase() },
- ],
- });
+ const { data: patient, error } = await supabase
+ .from("patients")
+ .select("*")
+ .or(`username.eq.${username.toLowerCase()},email.eq.${username.toLowerCase()}`)
+ .single();
 
- if (!patient) {
+ if (error || !patient) {
  return NextResponse.json(
  { error:"No account found with this username or email." },
  { status: 404 }
@@ -44,15 +40,15 @@ export async function POST(request) {
  return NextResponse.json({
  message:"Login successful",
  patient: {
- id: patient._id,
- firstName: patient.firstName,
- lastName: patient.lastName,
+ id: patient.id,
+ firstName: patient.first_name,
+ lastName: patient.last_name,
  email: patient.email,
  username: patient.username,
  phone: patient.phone,
  age: patient.age,
  blood: patient.blood,
- createdAt: patient.createdAt,
+ createdAt: patient.created_at,
  },
  });
  } catch (error) {

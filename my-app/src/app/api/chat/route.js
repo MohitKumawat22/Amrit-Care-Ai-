@@ -1,6 +1,5 @@
-import { NextResponse } from"next/server";
-import connectDB from "@/lib/mongodb";
-import ChatHistory from"@/models/ChatHistory";
+import { NextResponse } from "next/server";
+import supabase from "@/lib/supabase";
 
 const getSystemPrompt = () => {
  const now = new Date();
@@ -102,11 +101,10 @@ export async function POST(request) {
  });
  }
 
- // Load past history & reports from DB for richer context
- if (patientId) {
- try {
- await connectDB();
- const history = await ChatHistory.findOne({ patientId }).lean();
+  // Load past history & reports from DB for richer context
+  if (patientId) {
+    try {
+      const { data: history, error } = await supabase.from("chat_histories").select("*").eq("patient_id", patientId).single();
 
  if (history) {
  // Inject uploaded medical reports as context

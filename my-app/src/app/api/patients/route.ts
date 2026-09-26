@@ -1,29 +1,43 @@
 import { NextRequest, NextResponse } from"next/server";
-import connectDB from"@/lib/mongodb";
-import Patient from"@/models/Patient";
+import supabase from"@/lib/supabase";
 
 export async function GET(request: NextRequest) {
  try {
- await connectDB();
  const { searchParams } = new URL(request.url);
  const search = searchParams.get("search");
- const status = searchParams.get("status");
- const department = searchParams.get("department");
 
-  const filter: any = {};
-  if (search) {
-    filter.$or = [
-      { firstName: { $regex: search, $options: "i" } },
-      { lastName: { $regex: search, $options: "i" } },
-      { email: { $regex: search, $options: "i" } },
-      { username: { $regex: search, $options: "i" } },
-    ];
-  }
- if (status) filter.status = status;
- if (department) filter.department = department;
+ let query = supabase
+ .from("patients")
+ .select("*")
+ .order("created_at", { ascending: false });
 
- const patients = await Patient.find(filter).sort({ createdAt: -1 });
- return NextResponse.json({ patients }, { status: 200 });
+ if (search) {
+ query = query.or(
+ `first_name.ilike.%${search}%,last_name.ilike.%${search}%,email.ilike.%${search}%,username.ilike.%${search}%`
+ );
+ }
+
+ const { data: patients, error } = await query;
+
+ if (error) {
+ console.error("GET Patients Error:", error);
+ return NextResponse.json({ error: error.message }, { status: 500 });
+ }
+
+ // Map to camelCase
+ const mapped = (patients || []).map(p => ({
+ _id: p.id,
+ firstName: p.first_name,
+ lastName: p.last_name,
+ email: p.email,
+ phone: p.phone,
+ username: p.username,
+ age: p.age,
+ blood: p.blood,
+ createdAt: p.created_at,
+ }));
+
+ return NextResponse.json({ patients: mapped }, { status: 200 });
  } catch (error: any) {
  console.error("GET Patients Error:", error);
  return NextResponse.json({ error: error.message }, { status: 500 });
@@ -32,9 +46,27 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
  try {
- await connectDB();
  const body = await request.json();
- const newPatient = await Patient.create(body);
+ const { data: newPatient, error } = await supabase
+ .from("patients")
+ .insert({
+ first_name: body.firstName,
+ last_name: body.lastName,
+ email: body.email,
+ phone: body.phone,
+ username: body.username,
+ password: body.password,
+ age: body.age,
+ blood: body.blood,
+ })
+ .select()
+ .single();
+
+ if (error) {
+ console.error("POST Patient Error:", error);
+ return NextResponse.json({ error: error.message }, { status: 500 });
+ }
+
  return NextResponse.json(newPatient, { status: 201 });
  } catch (error: any) {
  console.error("POST Patient Error:", error);

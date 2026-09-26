@@ -1,66 +1,61 @@
 import { NextResponse } from "next/server";
-import connectDB from "@/lib/mongodb";
-import CallLog from "@/models/CallLog";
+import supabase from "@/lib/supabase";
 
 // GET /api/calls?patientId=xxx — fetch patient's call history
 export async function GET(request) {
   try {
-    await connectDB();
     const { searchParams } = new URL(request.url);
     const patientId = searchParams.get("patientId");
 
     if (!patientId) {
-      return NextResponse.json(
-        { error: "patientId is required." },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "patientId is required." }, { status: 400 });
     }
 
-    const calls = await CallLog.find({ patientId })
-      .sort({ scheduledAt: -1 })
-      .select("-context -transcript") // Keep response light; expand only when needed
-      .lean();
+    const { data: calls, error } = await supabase
+      .from("call_logs")
+      .select("id, patient_id, scheduled_at, status, call_sid, retry_count, severity, notes, recurrence, override_phone, override_name, memory, created_at")
+      .eq("patient_id", patientId)
+      .order("scheduled_at", { ascending: false });
 
-    return NextResponse.json({ calls });
+    if (error) {
+      console.error("GET /api/calls error:", error);
+      return NextResponse.json({ error: "Failed to fetch calls." }, { status: 500 });
+    }
+
+    // Map to camelCase
+    const mapped = (calls || []).map(c => ({
+      _id: c.id,
+      patientId: c.patient_id,
+      scheduledAt: c.scheduled_at,
+      status: c.status,
+      callSid: c.call_sid,
+      severity: c.severity,
+      notes: c.notes,
+      recurrence: c.recurrence,
+      createdAt: c.created_at,
+    }));
+
+    return NextResponse.json({ calls: mapped });
   } catch (error) {
     console.error("GET /api/calls error:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch calls." },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to fetch calls." }, { status: 500 });
   }
 }
 
 // POST /api/calls — schedule a new call
-// Body: { patientId, scheduledAt, notes?, recurrence?, overridePhone?, overrideName? }
 export async function POST(request) {
   try {
-    await connectDB();
-    const {
-      patientId,
-      scheduledAt,
-      notes,
-      recurrence,
-      overridePhone,
-      overrideName,
-    } = await request.json();
+    const { patientId, scheduledAt, notes, recurrence, overridePhone, overrideName } = await request.json();
 
     if (!patientId || !scheduledAt) {
-      return NextResponse.json(
-        { error: "patientId and scheduledAt are required." },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "patientId and scheduledAt are required." }, { status: 400 });
     }
 
     const scheduled = new Date(scheduledAt);
     if (scheduled <= new Date()) {
-      return NextResponse.json(
-        { error: "scheduledAt must be a future date/time." },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "scheduledAt must be a future date/time." }, { status: 400 });
     }
 
-    // Check Twilio configuration — warn but don't block scheduling
     const twilioConfigured =
       process.env.TWILIO_ACCOUNT_SID &&
       process.env.TWILIO_AUTH_TOKEN &&
@@ -75,41 +70,44 @@ export async function POST(request) {
       );
     }
 
-    const callLog = await CallLog.create({
-      patientId,
-      scheduledAt: scheduled,
-      notes: notes || "",
-      status: "scheduled",
-      recurrence: recurrence || "one-time",
-      overridePhone: overridePhone || null,
-      overrideName: overrideName || null,
-    });
+    const { data: callLog, error } = await supabase
+      .from("call_logs")
+      .insert({
+        patient_id: patientId,
+        scheduled_at: scheduled.toISOString(),
+        notes: notes || "",
+        status: "scheduled",
+        recurrence: recurrence || "one-time",
+        override_phone: overridePhone || null,
+        override_name: overrideName || null,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error("POST /api/calls error:", error);
+      return NextResponse.json({ error: "Failed to schedule call." }, { status: 500 });
+    }
 
     return NextResponse.json(
       {
-        call: callLog,
+        call: { _id: callLog.id, ...callLog },
         twilioConfigured: !!twilioConfigured,
         warning: twilioConfigured
           ? null
-          : "Call saved successfully, but AI phone calls are not configured yet. " +
-            "Add TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER, and NGROK_URL " +
-            "to your .env.local to enable live calls.",
+          : "Call saved successfully, but AI phone calls are not configured yet.",
       },
       { status: 201 }
     );
   } catch (error) {
     console.error("POST /api/calls error:", error);
-    return NextResponse.json(
-      { error: "Failed to schedule call." },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to schedule call." }, { status: 500 });
   }
 }
 
 // DELETE /api/calls?id=xxx — cancel a scheduled call
 export async function DELETE(request) {
   try {
-    await connectDB();
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
 
@@ -117,8 +115,13 @@ export async function DELETE(request) {
       return NextResponse.json({ error: "id is required." }, { status: 400 });
     }
 
-    const call = await CallLog.findById(id);
-    if (!call) {
+    const { data: call, error: fetchErr } = await supabase
+      .from("call_logs")
+      .select("*")
+      .eq("id", id)
+      .single();
+
+    if (fetchErr || !call) {
       return NextResponse.json({ error: "Call not found." }, { status: 404 });
     }
 
@@ -129,15 +132,20 @@ export async function DELETE(request) {
       );
     }
 
-    call.status = "cancelled";
-    await call.save();
+    const { data: updated, error: updateErr } = await supabase
+      .from("call_logs")
+      .update({ status: "cancelled", updated_at: new Date().toISOString() })
+      .eq("id", id)
+      .select()
+      .single();
 
-    return NextResponse.json({ success: true, call });
+    if (updateErr) {
+      return NextResponse.json({ error: "Failed to cancel call." }, { status: 500 });
+    }
+
+    return NextResponse.json({ success: true, call: updated });
   } catch (error) {
     console.error("DELETE /api/calls error:", error);
-    return NextResponse.json(
-      { error: "Failed to cancel call." },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to cancel call." }, { status: 500 });
   }
 }
